@@ -13,7 +13,7 @@ Formalize Hermes Agent's platform support into three tiers, document them in the
 | Platform | Installer |
 |----------|-----------|
 | Linux x86_64 / arm64 | `curl \| bash` installer, Docker image |
-| Latest Debian, Ubuntu, Fedora | `curl \| bash` installer |
+| Latest Debian, Ubuntu, Fedora, Windows WSL | `curl \| bash` installer |
 | Official Docker image | `docker pull` |
 | macOS arm64 | Desktop app installer, `curl \| bash` installer |
 | Windows x86_64 / arm64 | Desktop app installer, PowerShell installer |
@@ -94,17 +94,20 @@ In `hermes_cli/`:
 - `website/docs/getting-started/installation.md`: remove the pip install row from the install layout table; add a deprecation callout box; add a brief "Migrating from pip" section
 - `website/docs/getting-started/updating.md`: replace the "pip installs" section with a deprecation notice + link
 
-**Step 4: Clean up pyproject.toml (after the final release)**
+**Step 4: Clean up pyproject.toml and enforce build failure (after the final release)**
 
 - Add a comment at the top of `[project]` noting that PyPI publishing is discontinued
 - Remove `[project.scripts]` entries — they're only needed for pip's `console_scripts` entry points; git/docker/nix all use their own launchers
-- Keep `[build-system]`, `[project.optional-dependencies]`, and `[tool.setuptools]` sections — they're used by nix build and dev setup, not just pip
+- Keep `[build-system]`, `[project.optional-dependencies]`, and `[tool.setuptools]` sections — they're used by nix build and local dev setup (like termux), not just pip
 - Remove `hermes_agent.egg-info/` from tracking
+- **Enforce wheel build failure**: replace any remaining `setup.py` with a minimal stub that explicitly raises a `RuntimeError("pip/wheel builds are discontinued. Please use curl install, docker, or nix. See https://hermes-agent.nousresearch.com/")`. This prevents accidental silent fallback builds.
+- **Standardize on uv**: update all remaining local dev/build documentation, scripts, and comments to explicitly use `uv pip` instead of plain `pip`.
 
-**Step 5: Remove pip-specific update code**
+**Step 5: Rip out `ensurepip` and standardize entirely on `uv`**
 
-- In `hermes_cli/config.py` and `hermes_cli/main.py`, the pip update path should print a hard deprecation message instead of attempting `uv pip install --upgrade`
-- `is_uv_tool_install()` detection can stay (it's used internally)
+Since the `curl | bash` installer and all supported environments guarantee a working `uv` binary, remove all legacy `ensurepip` bootstrapping and plain `pip` fallback logic across the codebase. Any remaining local dependency provisioning (e.g., in dev setups, update recovery, or tool environments like Modal) must strictly use `uv pip`. This eliminates race conditions, partial installs, and state confusion from legacy pip bootstrapping.
+- Print a hard deprecation message instead of attempting any `pip install` commands in `config.py` / `main.py` update paths.
+- `is_uv_tool_install()` detection can stay (it's used internally to differentiate from source/nix/docker builds).
 
 ### 2. Homebrew
 
@@ -173,8 +176,9 @@ In `hermes_cli/`:
 7. Update `packaging/homebrew/hermes-agent.rb` with `deprecate!`
 8. Cut the final PyPI release with deprecation description in pyproject.toml
 9. After the release: disable `upload_to_pypi.yml`, replace pip update command with deprecation message, add deprecation comments to pyproject.toml, remove `[project.scripts]`
-10. Add termux best-effort banner to termux docs
-11. Add macOS x86_64 unsupported warning to `hermes doctor`
+10. Rip out all `ensurepip` and legacy `pip` fallback logic across `hermes_cli/main.py`, `hermes_cli/tools_config.py`, `tools/lazy_deps.py`, `tools/environments/modal.py`, and install scripts, standardizing exclusively on `uv pip`.
+11. Add termux best-effort banner to termux docs
+12. Add macOS x86_64 unsupported warning to `hermes doctor`
 
 ---
 
@@ -192,6 +196,10 @@ In `hermes_cli/`:
 | `hermes_cli/config.py` | Deprecation messages for pip update + Homebrew update command |
 | `hermes_cli/banner.py` | Deprecation line for pip installs + Homebrew installs |
 | `hermes_cli/main.py` | `hermes doctor` pip + Homebrew deprecation warnings, macOS x86_64 warning |
+| `hermes_cli/tools_config.py` | Rip out `ensurepip` fallback, standardize on `uv pip` for local provisioning |
+| `tools/lazy_deps.py` | Rip out `ensurepip` fallback, standardize on `uv pip` for local provisioning |
+| `tools/environments/modal.py` | Rip out `ensurepip` fallback, standardize on `uv pip` for local provisioning |
+| `scripts/install.ps1` | Rip out `ensurepip` fallback, standardize on `uv pip` for local provisioning |
 | `packaging/homebrew/hermes-agent.rb` | Add `deprecate!`, freeze comment |
 | `packaging/homebrew/README.md` | Mark as deprecated |
 | `pyproject.toml` | Deprecation description, later: remove `[project.scripts]`, add comments |
@@ -214,9 +222,9 @@ After a suitable deprecation period (suggested: 2–3 minor releases, or ~6 mont
 | `hermes_cli/config.py` — `format_managed_message()` | Remove the `Homebrew` branch. |
 | `hermes_cli/banner.py` | Remove pip and Homebrew deprecation lines from the banner. |
 | `hermes_cli/main.py` — `hermes doctor` | Remove pip and Homebrew deprecation warnings. |
-| `pyproject.toml` — `[project.optional-dependencies]` | Remove the `termux` and `termux-all` extras (termux is best-effort but pip extras only exist for pip installs). Remove the `pty` and `vision` back-compat aliases (they were only for `pip install hermes-agent[pty]` / `[vision]`). |
+| `pyproject.toml` — `[project.optional-dependencies]` | Keep the `termux` and `termux-all` extras (local source builds via uv/nix still use them for best-effort support). Remove the `pty` and `vision` back-compat aliases (they were legacy pip-only install targets). |
 | `pyproject.toml` — `[project]` | Remove `description` deprecation prefix. |
-| `setup.py` | Remove entirely — setuptools data_files are only needed for pip/wheel installs. Move the skills/optional-skills data-file logic into the nix build if nix still needs it. |
+| `setup.py` | Replace with a minimal stub that raises a `RuntimeError` explaining pip/wheel builds are discontinued (prevents silent fallback builds). Move any skills/optional-skills data-file logic into the nix build if nix still needs it. |
 | `hermes_agent.egg-info/` | Delete entirely. |
 | `.github/workflows/upload_to_pypi.yml` | Delete the workflow file. |
 | `constraints-termux.txt` | Remove — termux users build from source and can maintain their own constraints. |
@@ -245,6 +253,7 @@ After a suitable deprecation period (suggested: 2–3 minor releases, or ~6 mont
 
 ### General cleanup
 
+- **Rip out all `ensurepip` and `pip` fallback logic**: Search the codebase for `ensurepip`, `-m pip`, and `pip install`. Update `hermes_cli/main.py`, `hermes_cli/tools_config.py`, `tools/lazy_deps.py`, `tools/environments/modal.py`, and install scripts to exclusively use `uv pip` for *any* remaining local environment provisioning.
 - Search the codebase for any remaining references to `"pip"`, `"homebrew"`, `"brew"`, `PyPI`, `pypi.org`, `upload_to_pypi`, `egg-info`, and `setup.py` — remove or update them.
 - Run the full test suite to confirm nothing is broken by the removals.
 - Update `AGENTS.md` and `website/docs/reference/platform-support.md` to remove any "deprecated" language and state the removed paths as simply unsupported (no longer "deprecated and still detected" — just gone).
