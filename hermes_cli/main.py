@@ -6498,9 +6498,10 @@ def _recover_from_interrupted_install() -> None:
             # the exact manual recovery command in the meantime.
             logger.debug("Interrupted-install recovery failed: %s", exc)
             print("✗ Could not auto-recover the interrupted install.")
-            print("  Recover manually with:")
+            print("  Recover manually by ensuring uv is installed, then run:")
             print(f"    cd {PROJECT_ROOT}")
-            print(f"    {sys.executable} -m pip install -e '.[all]'")
+            print("    uv pip install -e '.[all]'")
+            print("  (Or re-run the Hermes installer: curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash)")
     finally:
         sys.stdout = saved_sys_stdout
         if saved_stdout_fd is not None:
@@ -10198,10 +10199,9 @@ def cmd_dashboard(args):
     except ImportError as e:
         print("Web UI dependencies not installed (need fastapi + uvicorn).")
         print(
-            f"Re-install the package into this interpreter so metadata updates apply:\n"
+            f"Re-install the package using uv so metadata updates apply:\n"
             f"  cd {PROJECT_ROOT}\n"
-            f"  {sys.executable} -m pip install -e .\n"
-            "If `pip` is missing in this venv, use:  uv pip install -e ."
+            f"  uv pip install -e .\n"
         )
         print(f"Import error: {e}")
         sys.exit(1)

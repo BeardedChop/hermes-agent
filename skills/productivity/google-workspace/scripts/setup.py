@@ -151,7 +151,7 @@ def install_deps():
         "uv-managed venv), install the optional extra instead:"
     )
     print("  pip install 'hermes-agent[google]'")
-    print(f"Or manually: {sys.executable} -m pip install {' '.join(REQUIRED_PACKAGES)}")
+    print(f"Or manually: uv pip install {' '.join(REQUIRED_PACKAGES)}")
     return False
 
 

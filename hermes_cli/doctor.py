@@ -1871,9 +1871,9 @@ def run_doctor(args):
             return _ConnectivityResult(
                 "AWS Bedrock",
                 [(color("⚠", Colors.YELLOW), label,
-                  color(f"(boto3 not installed — {sys.executable} -m pip install boto3)",
+                  color(f"(boto3 not installed — uv pip install boto3)",
                         Colors.DIM))],
-                [f"Install boto3 for Bedrock: {sys.executable} -m pip install boto3"],
+                [f"Install boto3 for Bedrock: uv pip install boto3"],
             )
         except Exception as e:
             err_name = type(e).__name__
@@ -1930,7 +1930,7 @@ def run_doctor(args):
                 "Azure Foundry (Entra ID)",
                 [(color("⚠", Colors.YELLOW), label,
                   color("(azure-identity not installed)", Colors.DIM))],
-                [f"Install azure-identity: {sys.executable} -m pip install azure-identity"],
+                [f"Install azure-identity: uv pip install azure-identity"],
             )
 
         base_url = str(model_cfg.get("base_url") or "").strip()
