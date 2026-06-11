@@ -583,7 +583,15 @@ def run_doctor(args):
     if uv_bin:
         check_ok(f"Managed uv available ({uv_bin})")
     else:
-        check_warn("Managed uv not found", "(dependency installation will fall back to plain pip)")
+        # Secondary check for system uv (e.g., Termux `pkg install uv`)
+        path_uv = shutil.which("uv")
+        if path_uv:
+            check_ok(f"System uv available ({path_uv})")
+        else:
+            check_fail(
+                "uv is missing", 
+                "(dependency installation will fail. Install uv via the Hermes installer, or `pkg install uv` on Termux)",
+            )
 
     _section("Required Packages")
     required_packages = [
