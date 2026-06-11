@@ -227,3 +227,67 @@ class TestLiveReadOnly:
         cap = b.capture(mode="ax")
         assert cap.mode == "ax"
         assert cap.png_b64 is None
+
+
+# ---------------------------------------------------------------------------
+# Overlay client — gating and fail-safety (any platform)
+# ---------------------------------------------------------------------------
+
+class TestOverlayClient:
+    def test_env_kill_switch_disables_overlay(self, monkeypatch):
+        monkeypatch.setenv("HERMES_COMPUTER_USE_OVERLAY", "0")
+        from tools.computer_use.windows_backend import _OverlayClient
+        client = _OverlayClient()
+        client.start()                       # must not spawn anything
+        assert client._proc is None
+        assert client.pid is None
+        client.send({"cmd": "flash"})        # must be a silent no-op
+        client.stop()
+
+    def test_send_before_start_is_noop(self):
+        from tools.computer_use.windows_backend import _OverlayClient
+        client = _OverlayClient()
+        client.send({"cmd": "click", "x": 1, "y": 2})  # no socket yet — no raise
+        assert client.pid is None
+
+    def test_backend_constructs_overlay_client(self):
+        backend = _fresh_backend()
+        assert hasattr(backend, "_overlay")
+        # Overlay failures must never surface through backend actions: a dead
+        # client swallows sends.
+        backend._overlay._dead = True
+        backend._overlay.send({"cmd": "flash"})
+
+
+# ---------------------------------------------------------------------------
+# Vision downscale helper (any platform; needs Pillow, a core dependency)
+# ---------------------------------------------------------------------------
+
+class TestShrinkCaptureForVision:
+    @staticmethod
+    def _png_bytes(w, h):
+        pil = pytest.importorskip("PIL.Image")
+        import io
+        buf = io.BytesIO()
+        pil.new("RGB", (w, h), (10, 20, 30)).save(buf, format="PNG")
+        return buf.getvalue()
+
+    def test_oversized_image_is_downscaled(self):
+        from PIL import Image
+        import io
+        from tools.computer_use.tool import _shrink_capture_for_vision
+        raw = self._png_bytes(1920, 1080)
+        out = _shrink_capture_for_vision(raw, ".png", max_dim=1456)
+        img = Image.open(io.BytesIO(out))
+        assert max(img.size) == 1456
+        assert img.size == (1456, 819)       # aspect ratio preserved
+
+    def test_small_image_passes_through_unchanged(self):
+        from tools.computer_use.tool import _shrink_capture_for_vision
+        raw = self._png_bytes(800, 600)
+        assert _shrink_capture_for_vision(raw, ".png", max_dim=1456) is raw
+
+    def test_garbage_bytes_return_unchanged(self):
+        from tools.computer_use.tool import _shrink_capture_for_vision
+        raw = b"not an image at all"
+        assert _shrink_capture_for_vision(raw, ".png") is raw
