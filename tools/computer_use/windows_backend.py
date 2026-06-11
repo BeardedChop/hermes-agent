@@ -223,6 +223,44 @@ _EXTENDED_VKS = frozenset({0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
 _MODIFIER_VKS = frozenset({0x10, 0x11, 0x12, 0x5B})
 
 
+class _LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.wintypes.UINT), ("dwTime", ctypes.wintypes.DWORD)]
+
+
+def _seconds_since_user_input() -> float:
+    """Seconds since the user's last keyboard/mouse input (session-wide)."""
+    info = _LASTINPUTINFO()
+    info.cbSize = ctypes.sizeof(_LASTINPUTINFO)
+    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+        return float("inf")
+    # GetTickCount wraps at 49.7 days; the unsigned subtraction below stays
+    # correct across a single wrap.
+    delta = (ctypes.windll.kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF
+    return delta / 1000.0
+
+
+def _wait_for_user_idle() -> None:
+    """Hold injected input briefly while the user is actively typing/mousing.
+
+    Synthetic input lands in whatever has focus; colliding with a human
+    mid-keystroke sprays input across both parties' targets. Wait for
+    HERMES_COMPUTER_USE_IDLE_WAIT seconds (default 1.5, 0 disables) of user
+    idle, but never longer than ~8s total — the agent should yield, not
+    deadlock behind a user who is working.
+    """
+    try:
+        threshold = float(os.environ.get("HERMES_COMPUTER_USE_IDLE_WAIT", "1.5"))
+    except ValueError:
+        threshold = 1.5
+    if threshold <= 0:
+        return
+    deadline = time.monotonic() + 8.0
+    while time.monotonic() < deadline:
+        if _seconds_since_user_input() >= threshold:
+            return
+        time.sleep(0.2)
+
+
 def _vk_for_key(name: str) -> Optional[int]:
     """Map a key name to a virtual-key code; None when unknown."""
     name = name.strip().lower()
@@ -420,6 +458,11 @@ class WindowsUIABackend(ComputerUseBackend):
         self._last_app: Optional[str] = None
         self._target_hwnd: Optional[int] = None
         self._target_pid: Optional[int] = None
+        # Window rect at the time of the last capture — element bounds are
+        # absolute screen coords, so if the window moves between capture and
+        # click we translate by the origin delta instead of clicking stale
+        # pixels (see _element_offset).
+        self._capture_rect: Optional[Tuple[int, int, int, int]] = None
         self._started = False
         self._overlay = _OverlayClient()
 
@@ -526,6 +569,10 @@ class WindowsUIABackend(ComputerUseBackend):
             return False
 
     def _ensure_target_foreground(self) -> None:
+        # Called exactly once at the top of every input-injecting action —
+        # the idle guard lives here so all of click/drag/scroll/type/key
+        # yield to an actively-working user before touching the desktop.
+        _wait_for_user_idle()
         if self._target_hwnd and win32gui.IsWindow(self._target_hwnd):
             self._bring_to_foreground(self._target_hwnd)
 
@@ -563,6 +610,7 @@ class WindowsUIABackend(ComputerUseBackend):
             return CaptureResult(mode=mode, width=0, height=0)
 
         x, y, w, h = _window_rect(hwnd)
+        self._capture_rect = (x, y, w, h)
         window_title = win32gui.GetWindowText(hwnd)
 
         img = None
@@ -690,6 +738,27 @@ class WindowsUIABackend(ComputerUseBackend):
             draw.text((ix + 3, iy + 1), text, fill=(255, 255, 255))
 
     # ── Pointer actions ─────────────────────────────────────────────
+    def _element_offset(self, el: UIElement) -> Tuple[int, int]:
+        """Origin shift to apply to cached element bounds.
+
+        If the element's window moved since the capture, the cached absolute
+        coords are stale by exactly the window-origin delta — translate.
+        A resize invalidates interior layout, so that demands a re-capture.
+        """
+        hwnd = el.window_id
+        if not (hwnd and self._capture_rect and win32gui.IsWindow(hwnd)):
+            return 0, 0
+        try:
+            cx, cy, cw, ch = self._capture_rect
+            nx, ny, nw, nh = _window_rect(hwnd)
+        except Exception:
+            return 0, 0
+        if (nw, nh) != (cw, ch):
+            raise ValueError(
+                "the target window was resized since the last capture — "
+                "re-run capture(mode='som') for fresh element positions")
+        return nx - cx, ny - cy
+
     def _resolve_point(self, element: Optional[int], x: Optional[int],
                        y: Optional[int]) -> Tuple[int, int, str]:
         """Return (x, y, what) for an action target; raises ValueError."""
@@ -699,8 +768,12 @@ class WindowsUIABackend(ComputerUseBackend):
                 raise ValueError(
                     f"element #{element} is not in the last capture — re-run "
                     "capture(mode='som') and use a fresh index")
+            dx, dy = self._element_offset(el)
             cx, cy = el.center()
-            return cx, cy, f"element #{element} ({el.role} {el.label!r})"
+            what = f"element #{element} ({el.role} {el.label!r})"
+            if dx or dy:
+                what += f" [window moved {dx:+d},{dy:+d} since capture]"
+            return cx + dx, cy + dy, what
         if x is None or y is None:
             raise ValueError("requires element= or coordinate [x, y]")
         return int(x), int(y), f"({x}, {y})"

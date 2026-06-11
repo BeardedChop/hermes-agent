@@ -291,3 +291,85 @@ class TestShrinkCaptureForVision:
         from tools.computer_use.tool import _shrink_capture_for_vision
         raw = b"not an image at all"
         assert _shrink_capture_for_vision(raw, ".png") is raw
+
+
+# ---------------------------------------------------------------------------
+# Hardening: vision-down fallback, stale-coordinate translation, idle guard
+# ---------------------------------------------------------------------------
+
+class TestVisionDownFallback:
+    def test_capture_degrades_to_text_when_aux_vision_fails(self, monkeypatch):
+        """Routing requested (text-only main) + vision down => AX text payload,
+        never a multimodal envelope a text model can't consume."""
+        from tools.computer_use import tool
+        from tools.computer_use.backend import CaptureResult, UIElement
+        monkeypatch.setattr(tool, "_should_route_through_aux_vision", lambda: True)
+        monkeypatch.setattr(tool, "_route_capture_through_aux_vision",
+                            lambda cap, summary: None)
+        # Must be >= 8x8 or _capture_response's provider-minimum check skips
+        # the vision branch entirely before the fallback we're testing.
+        import base64
+        import io
+        pil = pytest.importorskip("PIL.Image")
+        buf = io.BytesIO()
+        pil.new("RGB", (16, 16), (40, 40, 40)).save(buf, format="PNG")
+        png_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        cap = CaptureResult(
+            mode="som", width=800, height=600, png_b64=png_b64,
+            elements=[UIElement(index=1, role="Button", label="OK",
+                                bounds=(1, 2, 3, 4))],
+            app="x.exe", window_title="W")
+        resp = tool._capture_response(cap)
+        assert isinstance(resp, str), "must be a text payload, not multimodal"
+        body = json.loads(resp)
+        assert body["vision_unavailable"] is True
+        assert body["elements"][0]["index"] == 1
+        assert "Element-index actions still work" in body["summary"]
+
+
+class TestStaleCoordinateTranslation:
+    def _backend_with_element(self, monkeypatch, new_rect):
+        from tools.computer_use import windows_backend as wb
+        from tools.computer_use.backend import UIElement
+        b = wb.WindowsUIABackend()
+        b._elements[1] = UIElement(index=1, role="Button", label="OK",
+                                   bounds=(110, 220, 100, 50), window_id=777)
+        b._capture_rect = (100, 200, 640, 480)
+        monkeypatch.setattr(wb, "win32gui",
+                            types.SimpleNamespace(IsWindow=lambda h: True),
+                            raising=False)
+        monkeypatch.setattr(wb, "_window_rect", lambda h: new_rect)
+        return b
+
+    def test_window_moved_translates_click_point(self, monkeypatch):
+        b = self._backend_with_element(monkeypatch, (130, 250, 640, 480))
+        x, y, what = b._resolve_point(1, None, None)
+        assert (x, y) == (160 + 30, 245 + 50)   # center (160,245) + delta (30,50)
+        assert "window moved" in what
+
+    def test_window_unmoved_uses_cached_center(self, monkeypatch):
+        b = self._backend_with_element(monkeypatch, (100, 200, 640, 480))
+        x, y, _ = b._resolve_point(1, None, None)
+        assert (x, y) == (160, 245)
+
+    def test_window_resized_demands_recapture(self, monkeypatch):
+        b = self._backend_with_element(monkeypatch, (100, 200, 800, 480))
+        res = b.click(element=1)
+        assert not res.ok
+        assert "resized" in res.message
+
+
+class TestIdleGuard:
+    def test_zero_threshold_disables_guard(self, monkeypatch):
+        from tools.computer_use import windows_backend as wb
+        monkeypatch.setenv("HERMES_COMPUTER_USE_IDLE_WAIT", "0")
+        wb._wait_for_user_idle()   # must return immediately, touch no win32
+
+    def test_returns_once_user_is_idle(self, monkeypatch):
+        from tools.computer_use import windows_backend as wb
+        monkeypatch.setenv("HERMES_COMPUTER_USE_IDLE_WAIT", "1.5")
+        monkeypatch.setattr(wb, "_seconds_since_user_input", lambda: 99.0)
+        import time as _t
+        t0 = _t.monotonic()
+        wb._wait_for_user_idle()
+        assert _t.monotonic() - t0 < 1.0

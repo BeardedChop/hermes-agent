@@ -1,4 +1,4 @@
-﻿"""End-to-end regression for #24015 â€” capture routing via auxiliary.vision.
+﻿"""End-to-end regression for #24015 -- capture routing via auxiliary.vision.
 
 When ``computer_use(action='capture', mode='som'|'vision')`` returns a
 screenshot, ``_capture_response`` previously always returned a
@@ -33,13 +33,13 @@ import pytest
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
 
-# 8Ã—8 PNG (transparent) â€” minimal provider-acceptable bytes that decode cleanly.
+# 8Ã—8 PNG (transparent) -- minimal provider-acceptable bytes that decode cleanly.
 _PNG_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAADUlEQVR4nG"
     "NgGAUgAAABCAABgukLHQAAAABJRU5ErkJggg=="
 )
 
-# 1Ã—1 JPEG â€” used to verify mime detection works for either stream type.
+# 1Ã—1 JPEG -- used to verify mime detection works for either stream type.
 _JPEG_B64 = (
     "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEB"
     "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/"
@@ -140,7 +140,7 @@ class TestCaptureResponseDefaultPath:
                           return_value=True) as routing:
             resp = cu_tool._capture_response(cap)
 
-        # ax never even consults the routing helper â€” short-circuited above
+        # ax never even consults the routing helper -- short-circuited above
         # the image branch.
         routing.assert_not_called()
         assert isinstance(resp, str)
@@ -298,15 +298,17 @@ class TestCaptureResponseRoutedToAuxVision:
                    new_callable=lambda: fake_vat):
             resp = cu_tool._capture_response(cap)
 
-        # Aux failure â†’ fall back to multimodal envelope (so the user still
-        # gets *something* useful even if vision is broken).
-        assert isinstance(resp, dict)
-        assert resp.get("_multimodal") is True
+        # Aux failure with routing requested (text-only main model) degrades
+        # to the AX/SOM text payload — a multimodal envelope would hand a
+        # screenshot to a model that cannot consume images.
+        assert isinstance(resp, str)
+        body = json.loads(resp)
+        assert body.get("vision_unavailable") is True
         # Temp file must still be cleaned up.
         assert observed_path["path"]
         assert not os.path.exists(observed_path["path"])
 
-    def test_empty_aux_analysis_falls_back_to_multimodal(self, tmp_cache_dir):
+    def test_empty_aux_analysis_degrades_to_text_payload(self, tmp_cache_dir):
         from tools.computer_use import tool as cu_tool
 
         cap = _make_capture(mode="som")
@@ -323,12 +325,15 @@ class TestCaptureResponseRoutedToAuxVision:
                    new_callable=lambda: fake_vat):
             resp = cu_tool._capture_response(cap)
 
-        # Empty analysis is treated as failure â€” we'd rather show pixels
-        # than embed an empty 'vision_analysis' string into the result.
-        assert isinstance(resp, dict)
-        assert resp.get("_multimodal") is True
+        # Empty analysis is treated as failure; with routing requested the
+        # capture degrades to the AX/SOM text payload (elements stay usable)
+        # rather than embedding an empty 'vision_analysis' string.
+        assert isinstance(resp, str)
+        body = json.loads(resp)
+        assert body.get("vision_unavailable") is True
+        assert body.get("elements") is not None
 
-    def test_invalid_aux_response_falls_back_to_multimodal(self, tmp_cache_dir):
+    def test_invalid_aux_response_degrades_to_text_payload(self, tmp_cache_dir):
         from tools.computer_use import tool as cu_tool
 
         cap = _make_capture(mode="som")
@@ -345,8 +350,9 @@ class TestCaptureResponseRoutedToAuxVision:
                    new_callable=lambda: fake_vat):
             resp = cu_tool._capture_response(cap)
 
-        assert isinstance(resp, dict)
-        assert resp.get("_multimodal") is True
+        assert isinstance(resp, str)
+        body = json.loads(resp)
+        assert body.get("vision_unavailable") is True
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +404,7 @@ class TestRoutingDecisionWiring:
 
         with patch("hermes_cli.config.load_config",
                    side_effect=RuntimeError("config.yaml unreadable")):
-            # No exception should bubble up â€” fail open by returning False
+            # No exception should bubble up -- fail open by returning False
             # so the legacy multimodal envelope continues to work.
             assert cu_tool._should_route_through_aux_vision() is False
 
@@ -417,14 +423,14 @@ class TestRoutingDecisionWiring:
 
 
 # ---------------------------------------------------------------------------
-# Bug reproduction marker â€” proves the fix is needed.
+# Bug reproduction marker -- proves the fix is needed.
 # ---------------------------------------------------------------------------
 
 class TestBugReproductionAnchor:
     """Without the fix, this test would assert the wrong thing.
 
     On upstream/main HEAD prior to this branch, _capture_response returns a
-    multimodal envelope unconditionally â€” so when a non-vision main model
+    multimodal envelope unconditionally -- so when a non-vision main model
     is configured, the captured PNG is delivered to the main provider as
     image_url content and the request is rejected with HTTP 404. We don't
     have a live provider here, but we can pin the contract: with routing
@@ -455,7 +461,7 @@ class TestBugReproductionAnchor:
 
         # Must be a string (text-only result).
         assert isinstance(resp, str)
-        # Must NOT contain a base64 image URL anywhere â€” that's what tripped
+        # Must NOT contain a base64 image URL anywhere -- that's what tripped
         # 'No endpoints found that support image input' on the reporter's
         # main provider in #24015.
         assert "data:image" not in resp
