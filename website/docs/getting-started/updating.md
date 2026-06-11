@@ -18,20 +18,13 @@ hermes update
 
 This pulls the latest code from `main`, updates dependencies, and prompts you to configure any new options that were added since your last update.
 
-### pip installs
+### pip / PyPI installs
 
-PyPI releases track **tagged versions** (major and minor releases), not every commit on `main`. Check for updates and upgrade with:
+:::warning Deprecation Notice
+**pip and PyPI installations are officially discontinued and no longer receive updates.**
+:::
 
-```bash
-hermes update --check    # see if a newer release is on PyPI
-hermes update            # runs pip install --upgrade hermes-agent
-```
-
-Or manually:
-
-```bash
-pip install --upgrade hermes-agent    # or: uv pip install --upgrade hermes-agent
-```
+If you installed via pip, please migrate to a supported installation method. See the [Migrating from pip / PyPI](./installation.md#migrating-from-pip--pypi) section for details. The `hermes update` command will also surface this deprecation warning for pip-based installs.
 
 :::tip
 `hermes update` automatically detects new configuration options and prompts you to add them. If you skipped that prompt, you can manually run `hermes config check` to see missing options, then `hermes config migrate` to interactively add them.
@@ -262,11 +255,17 @@ hermes uninstall
 
 The uninstaller gives you the option to keep your configuration files (`~/.hermes/`) for a future reinstall.
 
-### pip installs
+### pip / PyPI installs
+
+:::warning Deprecation Notice
+**pip and PyPI installations are officially discontinued.**
+:::
+
+If you previously installed via pip, you can simply uninstall the package. We highly recommend migrating to a supported installation method first (see [Installation](./installation.md#migrating-from-pip--pypi)).
 
 ```bash
 pip uninstall hermes-agent
-rm -rf ~/.hermes            # Optional — keep if you plan to reinstall
+rm -rf ~/.hermes            # Optional — keep if you plan to reinstall via a supported method
 ```
 
 ### Manual Uninstall

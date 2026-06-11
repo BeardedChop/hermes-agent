@@ -8,6 +8,10 @@ description: "Install Hermes Agent on Linux, macOS, WSL2, native Windows, or And
 
 Get Hermes Agent up and running in under two minutes!
 
+:::info Platform Support
+Hermes Agent supports **Linux, macOS (Apple Silicon), and Windows** via first-party installers. Packaging via `pip`/PyPI and Homebrew has been **deprecated**. For full details on supported platforms and migration guides, see the [Platform Support Reference](/reference/platform-support).
+:::
+
 ## Quick Install
 ### With the Hermes Desktop installer on macOS or Windows (recommended)
 To easily install the command-line and desktop applications, [download the Hermes Desktop installer](https://hermes-agent.nousresearch.com/desktop) from our website and run it.
@@ -42,7 +46,6 @@ Where the installer puts things depends on whether you're installing as a normal
 
 | Installer | Code lives at | `hermes` binary | Data directory |
 |---|---|---|---|
-| pip install | Python site-packages | `~/.local/bin/hermes` (console_scripts) | `~/.hermes/` |
 | Per-user (git installer) | `~/.hermes/hermes-agent/` | `~/.local/bin/hermes` (symlink) | `~/.hermes/` |
 | Root-mode (`sudo curl … \| sudo bash`) | `/usr/local/lib/hermes-agent/` | `/usr/local/bin/hermes` | `/root/.hermes/` (or `$HERMES_HOME`) |
 
@@ -76,6 +79,26 @@ hermes setup --portal
 
 That logs you in, sets Nous as your provider, and turns on the Tool Gateway in one command.
 :::
+
+---
+
+## Migrating from pip / PyPI
+
+:::warning Deprecation Notice
+**pip and PyPI installations are officially discontinued and no longer receive updates.**
+:::
+
+If you previously installed Hermes via `pip install hermes-agent`, please migrate to a supported installation method. The recommended approach is the universal installer script:
+
+```bash
+curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+```
+
+Alternatively, you can use Docker or Nix (see the [Nix & NixOS Setup](./nix-setup.md) guide). After installing via a supported method, you can safely uninstall the old pip package:
+
+```bash
+pip uninstall hermes-agent
+```
 
 ---
 
