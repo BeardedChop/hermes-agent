@@ -255,14 +255,24 @@ def get_pip_cmd() -> list[str]:
     """Return the preferred pip command prefix.
     
     Hermes manages its own uv binary. This returns the managed uv pip command
-    prefix (e.g., `["/path/to/managed/uv", "pip"]`), falling back to
-    `[sys.executable, "-m", "pip"]` only in degenerate cases where the managed
-    binary is missing or unavailable.
+    prefix (e.g., `["/path/to/managed/uv", "pip"]`). 
+    
+    Fallback hierarchy:
+    1. Managed uv at `$HERMES_HOME/bin/uv` (guaranteed on supported platforms).
+    2. System/PATH `uv` (e.g., Termux fallback via `pip install uv`).
+    3. `[sys.executable, "-m", "pip"]` (degenerate fallback only).
     """
     uv_bin = resolve_uv()
     if uv_bin:
         return [uv_bin, "pip"]
-    # Degenerate fallback for environments where managed uv is genuinely absent
+    
+    # Secondary fallback: check PATH for uv (critical for Termux compatibility
+    # where the official installer may fail due to glibc vs bionic differences).
+    path_uv = shutil.which("uv")
+    if path_uv:
+        return [path_uv, "pip"]
+        
+    # Degenerate fallback for environments where uv is genuinely absent
     return [sys.executable, "-m", "pip"]
 
 
