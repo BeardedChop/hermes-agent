@@ -24,7 +24,7 @@ import {
 import type { DetailsMode } from './details.ts'
 import { diffStats, type DiffStats } from './diff.ts'
 import type { SessionTabId } from './sessionPicker.ts'
-import { envOutputUnlimited } from './env.ts'
+import { envFlag, envOutputUnlimited } from './env.ts'
 import { registerNotifier } from './notify.ts'
 import { stripAnsi, stripOmittedNote, stripToolEnvelope } from './toolOutput.ts'
 import { DEFAULT_THEME, type Theme, themeFromSkin } from './theme.ts'
@@ -411,17 +411,27 @@ export function createSessionStore(options?: SessionStoreOptions) {
   // HANDLE_SAFE_MAX_ROWS = 1000 ≈ 47k handles ≈ 72% of the table on the
   // realistic-fixture mix, leaving ~18k slots of headroom for chrome
   // (composer/pickers/dashboard) and heavier-than-fixture rows. Pathological
-  // rows can still exceed it — renderable-weight-aware capping belongs to the
-  // virtualization work (#27); until then nativeHandles.ts degrades (unstyled
-  // text) instead of crashing. `HERMES_TUI_MAX_MESSAGES` can LOWER the cap but
+  // rows can still exceed it; nativeHandles.ts degrades (unstyled text)
+  // instead of crashing. `HERMES_TUI_MAX_MESSAGES` can LOWER the cap but
   // never raise it past the ceiling. Read once per store. Trimmed turns aren't
   // lost — they live on the gateway and are recoverable via `/resume`.
+  //
+  // With transcript WINDOWING on (#27, S1+S2 in view/transcript.tsx — the
+  // default), handles no longer scale with the store: out-of-window rows are
+  // exact-height spacers and the mounted set is ~3 viewports (measured peak 31
+  // rows over a 1500-row burst), so the scrollback ceiling returns to 3000
+  // (the originally shipped default, regression documented in
+  // docs/plans/opentui-fixes-audit.md §2). The HERMES_TUI_WINDOWING=0 escape
+  // hatch mounts every row again, so it keeps the handle-safe 1000 clamp.
   const HANDLE_SAFE_MAX_ROWS = 1000
+  const WINDOWED_MAX_ROWS = 3000
   const MESSAGE_CAP = (() => {
     if (options?.uncappedFixture) return Number.MAX_SAFE_INTEGER
+    const windowing = envFlag(process.env.HERMES_TUI_WINDOWING, true)
+    const ceiling = windowing ? WINDOWED_MAX_ROWS : HANDLE_SAFE_MAX_ROWS
     const raw = Number.parseInt(process.env.HERMES_TUI_MAX_MESSAGES ?? '', 10)
-    const requested = Number.isFinite(raw) && raw > 0 ? raw : HANDLE_SAFE_MAX_ROWS
-    return Math.min(requested, HANDLE_SAFE_MAX_ROWS)
+    const requested = Number.isFinite(raw) && raw > 0 ? raw : ceiling
+    return Math.min(requested, ceiling)
   })()
 
   const [state, setState] = createStore<StoreState>({
