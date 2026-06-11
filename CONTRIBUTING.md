@@ -9,12 +9,44 @@ Thank you for contributing to Hermes Agent! This guide covers everything you nee
 We value contributions in this order:
 
 1. **Bug fixes** — crashes, incorrect behavior, data loss. Always top priority.
-2. **Cross-platform compatibility** — macOS, different Linux distros, and WSL2 on Windows. We want Hermes to work everywhere.
+2. **Cross-platform compatibility** — See the [Platform Support](#platform-support) section below for tier-aware guidelines.
 3. **Security hardening** — shell injection, prompt injection, path traversal, privilege escalation. See [Security](#security-considerations).
 4. **Performance and robustness** — retry logic, error handling, graceful degradation.
 5. **New skills** — but only broadly useful ones. See [Should it be a Skill or a Tool?](#should-it-be-a-skill-or-a-tool)
 6. **New tools** — rarely needed. Most capabilities should be skills. See below.
 7. **Documentation** — fixes, clarifications, new examples.
+
+---
+
+## Platform Support
+
+Hermes Agent's platform support is formalized into three tiers. This ensures we can maintain high quality and reliability while still welcoming community contributions.
+
+### Explicitly Supported (Guaranteed)
+These platforms are fully supported, tested, and guaranteed to work. We provide first-party installers and prioritize fixes for these environments.
+
+| Platform | Supported Installers |
+|----------|----------------------|
+| Linux (x86_64 / arm64) | `curl \| bash` installer, Docker image |
+| Latest Debian, Ubuntu, Fedora | `curl \| bash` installer |
+| Official Docker image | `docker pull` |
+| macOS (arm64 / Apple Silicon) | Desktop app installer, `curl \| bash` installer |
+| Windows (x86_64 / arm64) | Desktop app installer, PowerShell installer |
+
+### Best-Effort Support
+We welcome community PRs for fixes on these platforms, and they generally work, but Nous will not prioritize them. We also do not accept packaging-specific code changes into the core repository for these platforms.
+
+- **Termux / Android**: Community-supported. Best-effort fixes are welcome, but will not block Hermes releases.
+- **AUR Packaging**: Community-maintained.
+- **Homebrew Packaging**: Deprecated. See the [Platform Support docs](https://hermes-agent.nousresearch.com/docs/reference/platform-support) for migration.
+- **Nix Packaging**: The `flake.nix` and NixOS module are maintained in-tree as a primary deployment method. However, niche Nix-specific packaging bugs (e.g., a new dependency failing to build under Nix) are treated as best-effort.
+
+### Explicitly Unsupported
+We do not accept PRs attempting to add or restore support for these platforms.
+
+- **macOS (x86_64 / Intel)**: No longer supported.
+- **Packaging via pip / PyPI**: Deprecated and discontinued.
+- **FreeBSD**: Not supported.
 
 ---
 

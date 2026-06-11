@@ -28,30 +28,12 @@ reviewing any change:
 
 ## Platform Support
 
-Hermes Agent's platform support is formalized into three tiers. For detailed user-facing migration instructions and support policies, see the [Platform Support Reference](https://hermes-agent.nousresearch.com/docs/reference/platform-support).
+Hermes Agent's platform support is formalized into three tiers. For the full tier breakdown, contribution guidelines, and user-facing migration policies, see the [Platform Support section in CONTRIBUTING.md](./CONTRIBUTING.md#platform-support) and the [Platform Support Reference](https://hermes-agent.nousresearch.com/docs/reference/platform-support).
 
-### Explicitly supported — guaranteed to work, first-party installers only
-
-| Platform | Installer |
-|----------|-----------|
-| Linux x86_64 / arm64 | `curl \| bash` installer, Docker image |
-| Latest Debian, Ubuntu, Fedora | `curl \| bash` installer |
-| Official Docker image | `docker pull` |
-| macOS arm64 | Desktop app installer, `curl \| bash` installer |
-| Windows x86_64 / arm64 | Desktop app installer, PowerShell installer |
-
-### Best-effort — PRs accepted for fixes, but Nous won't prioritize them, nor will we accept packaging-specific code in the repo
-
-- Termux / Android
-- AUR packaging
-- Homebrew packaging
-- Nix packaging (flake + NixOS module stay in-tree and maintained; packaging bugs outside core nix support are best-effort)
-
-### Explicitly unsupported — no PRs for support will be accepted
-
-- macOS x86_64
-- Packaging via pip / PyPI
-- FreeBSD
+**Summary for agents:**
+- **Explicitly Supported**: Linux (x86_64/arm64), macOS arm64, Windows (x86_64/arm64), Docker. Use `curl | bash`, PowerShell, or Docker installers.
+- **Best-Effort**: Termux, AUR, Homebrew, Nix. PRs accepted but won't block releases.
+- **Explicitly Unsupported**: macOS x86_64, pip/PyPI packaging, FreeBSD. Do not accept PRs for these.
 
 ## Contribution Rubric — What We Want / What We Don't
 
