@@ -152,11 +152,14 @@ class TestProjectFacts:
         assert "make test" in block
         assert "make deploy" not in block
 
-    def test_context_files_listed(self, tmp_path):
+    def test_context_files_not_listed(self, tmp_path):
+        # Context files (AGENTS.md etc.) are injected into the system prompt
+        # in full as the Project Context block — naming them in the snapshot
+        # would be redundant.
         _git_init(tmp_path)
         (tmp_path / "AGENTS.md").write_text("# rules")
         block = cc.build_coding_workspace_block(tmp_path)
-        assert "Context files: AGENTS.md" in block
+        assert "Context files:" not in block
 
     def test_marker_only_project_gets_snapshot_without_git(self, tmp_path):
         # A non-git project (manifest only) still gets a workspace snapshot —
