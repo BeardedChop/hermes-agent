@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from hermes_cli.managed_uv import get_pip_cmd
+from hermes_cli.managed_uv import pip_install
 from hermes_constants import get_hermes_home
 from plugins.memory.honcho.client import _host_block, profile_host_key, resolve_active_host, resolve_config_path, HOST
 from hermes_cli.config import cfg_get
@@ -413,12 +413,7 @@ def _ensure_sdk_installed() -> bool:
         return False
 
     print("  Installing honcho-ai...", flush=True)
-    result = subprocess.run(
-        get_pip_cmd() + ["install", "honcho-ai>=2.0.1"],
-        capture_output=True,
-        text=True,
-        stdin=subprocess.DEVNULL,
-    )
+    result = pip_install(["honcho-ai>=2.0.1"])
     if result.returncode == 0:
         print("  Installed.\n")
         return True

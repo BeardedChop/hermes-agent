@@ -135,7 +135,8 @@ def find_subprocess_calls(content: str, filepath: str) -> list[dict]:
 
 def main() -> int:
     fix_mode = "--fix" in sys.argv
-    repo_root = Path(__file__).resolve().parent.parent
+    from hermes_constants import get_hermes_source_root
+    repo_root = get_hermes_source_root()
     os.chdir(repo_root)
 
     all_violations = []

@@ -13,9 +13,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from hermes_cli.config import get_hermes_home, get_env_path, get_project_root, load_config
+from hermes_cli.config import get_hermes_home, get_env_path, load_config
 from hermes_cli.env_loader import load_hermes_dotenv
-from hermes_constants import display_hermes_home
+from hermes_constants import display_hermes_home, get_hermes_source_root
 from agent.skill_utils import is_excluded_skill_path
 
 
@@ -224,10 +224,10 @@ def run_dump(args):
     env_path = get_env_path()
     load_hermes_dotenv(
         hermes_home=env_path.parent,
-        project_env=get_project_root() / ".env",
+        project_env=get_hermes_source_root() / ".env",
     )
 
-    project_root = get_project_root()
+    project_root = get_hermes_source_root()
     hermes_home = get_hermes_home()
 
     try:

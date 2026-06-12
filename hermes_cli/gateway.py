@@ -15,7 +15,8 @@ import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+from hermes_constants import get_hermes_source_root
+PROJECT_ROOT = get_hermes_source_root()
 
 from gateway.status import terminate_pid
 from gateway.restart import (
@@ -2139,34 +2140,15 @@ def get_launchd_plist_path() -> Path:
 def _detect_venv_dir() -> Path | None:
     """Detect the active virtualenv directory.
 
-    Checks ``sys.prefix`` first (works regardless of the directory name),
-    then ``VIRTUAL_ENV`` env var (covers uv-managed environments where
-    sys.prefix == sys.base_prefix), then falls back to probing common
-    directory names under PROJECT_ROOT.
-    Returns ``None`` when no virtualenv can be found.
+    Delegates to ``get_venv_path()`` from ``hermes_cli.managed_uv``,
+    which is the single source of truth for locating the project venv.
+    Returns ``None`` only when the resolved path doesn't exist on disk
+    (pre-install state).
     """
-    # If we're running inside a virtualenv, sys.prefix points to it.
-    if sys.prefix != sys.base_prefix:
-        venv = Path(sys.prefix)
-        if venv.is_dir():
-            return venv
+    from hermes_cli.managed_uv import get_venv_path
+    p = get_venv_path()
+    return p if p.is_dir() else None
 
-    # uv and some other tools set VIRTUAL_ENV without changing sys.prefix.
-    # This catches `uv run` where sys.prefix == sys.base_prefix but the
-    # environment IS a venv.  (#8620)
-    _virtual_env = os.environ.get("VIRTUAL_ENV")
-    if _virtual_env:
-        venv = Path(_virtual_env)
-        if venv.is_dir():
-            return venv
-
-    # Fallback: check common virtualenv directory names under the project root.
-    for candidate in (".venv", "venv"):
-        venv = PROJECT_ROOT / candidate
-        if venv.is_dir():
-            return venv
-
-    return None
 
 
 def get_python_path() -> str:
@@ -2355,7 +2337,8 @@ def generate_systemd_unit(system: bool = False, run_as_user: str | None = None) 
     python_path = get_python_path()
     working_dir = _stable_service_working_dir()
     detected_venv = _detect_venv_dir()
-    venv_dir = str(detected_venv) if detected_venv else str(PROJECT_ROOT / "venv")
+    from hermes_cli.managed_uv import get_venv_path as _gvp
+    venv_dir = str(detected_venv) if detected_venv else str(_gvp())
 
     path_entries = _build_service_path_dirs()
     resolved_node = shutil.which("node")
@@ -3193,7 +3176,8 @@ def generate_launchd_plist() -> str:
     # the systemd unit), then capture the user's full shell PATH so every
     # user-installed tool (node, ffmpeg, …) is reachable.
     detected_venv = _detect_venv_dir()
-    venv_dir = str(detected_venv) if detected_venv else str(PROJECT_ROOT / "venv")
+    from hermes_cli.managed_uv import get_venv_path as _gvp
+    venv_dir = str(detected_venv) if detected_venv else str(_gvp())
     # Resolve the directory containing the node binary (e.g. Homebrew, nvm)
     # so it's explicitly in PATH even if the user's shell PATH changes later.
     priority_dirs = _build_service_path_dirs()

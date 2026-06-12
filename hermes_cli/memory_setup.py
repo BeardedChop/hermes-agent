@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from hermes_cli.managed_uv import get_pip_cmd
+from hermes_cli.managed_uv import pip_install
 from hermes_constants import get_hermes_home
 from hermes_cli.secret_prompt import masked_secret_prompt
 
@@ -99,20 +99,15 @@ def _install_dependencies(provider_name: str) -> None:
 
     print(f"\n  Installing dependencies: {', '.join(missing)}")
 
-    # Use the centralized helper for consistent uv-first installation
-    install_cmd = get_pip_cmd() + ["install", "--quiet"] + missing
-    manual_cmd = f"{' '.join(get_pip_cmd())} install {' '.join(missing)}"
-
+    manual_cmd = f"uv pip install {' '.join(missing)}"
     try:
-        subprocess.run(
-            install_cmd,
-            check=True, timeout=120,
-            capture_output=True,
-        )
+        result = pip_install(missing, quiet=True, timeout=120)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(result.returncode, result.args, result.stdout, result.stderr)
         print(f"  ✓ Installed {', '.join(missing)}")
     except subprocess.CalledProcessError as e:
         print(f"  ⚠ Failed to install {', '.join(missing)}")
-        stderr = (e.stderr or b"").decode()[:200]
+        stderr = (e.stderr or b"").decode()[:200] if isinstance(e.stderr, bytes) else (e.stderr or "")[:200]
         if stderr:
             print(f"    {stderr}")
         print(f"  Run manually: {manual_cmd}")

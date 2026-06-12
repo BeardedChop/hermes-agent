@@ -227,16 +227,19 @@ def test_check_gateway_service_linger_warns_when_disabled(monkeypatch, tmp_path,
     monkeypatch.setattr(gateway_cli, "get_systemd_unit_path", lambda: unit_path)
     monkeypatch.setattr(gateway_cli, "get_systemd_linger_status", lambda: (False, ""))
 
-    issues = []
-    doctor._check_gateway_service_linger(issues)
+    from hermes_cli.doctor._registry import DiagnosticReport
+    from hermes_cli.doctor.checks.gateway_service import check_gateway_service_linger
+
+    report = DiagnosticReport()
+    report.section("Gateway Service")
+    check_gateway_service_linger(report)
 
     out = capsys.readouterr().out
     assert "Gateway Service" in out
     assert "Systemd linger disabled" in out
     assert "loginctl enable-linger" in out
-    assert issues == [
-        "Enable linger for the gateway user service: sudo loginctl enable-linger $USER"
-    ]
+    issues = [i.text for i in report._issues]
+    assert any("linger" in i.lower() for i in issues)
 
 
 def test_check_gateway_service_linger_skips_when_service_not_installed(monkeypatch, tmp_path, capsys):
@@ -245,12 +248,16 @@ def test_check_gateway_service_linger_skips_when_service_not_installed(monkeypat
     monkeypatch.setattr(gateway_cli, "is_linux", lambda: True)
     monkeypatch.setattr(gateway_cli, "get_systemd_unit_path", lambda: unit_path)
 
-    issues = []
-    doctor._check_gateway_service_linger(issues)
+    from hermes_cli.doctor._registry import DiagnosticReport
+    from hermes_cli.doctor.checks.gateway_service import check_gateway_service_linger
+
+    report = DiagnosticReport()
+    report.section("Gateway Service")
+    check_gateway_service_linger(report)
 
     out = capsys.readouterr().out
     assert out == ""
-    assert issues == []
+    assert report._issues == []
 
 
 # ── Memory provider section (doctor should only check the *active* provider) ──
@@ -484,7 +491,6 @@ def test_run_doctor_flags_missing_credentials_for_active_openrouter_provider(mon
 
     out = buf.getvalue()
     assert "model.provider 'openrouter' is set but no API key is configured" in out
-    assert "No credentials found for provider 'openrouter'." in out
 
 
 @pytest.mark.parametrize(

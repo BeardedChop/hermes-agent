@@ -183,7 +183,8 @@ def _launch_elevated_gateway_command(command: str, extra_args: list[str] | None 
     if extra_args:
         args.extend(extra_args)
     params = subprocess.list2cmdline(args)
-    cwd = str(Path(__file__).resolve().parent.parent)
+    from hermes_constants import get_hermes_source_root
+    cwd = str(get_hermes_source_root())
     elevated_python = _derive_venv_pythonw(sys.executable)
     try:
         result = ctypes.windll.shell32.ShellExecuteW(

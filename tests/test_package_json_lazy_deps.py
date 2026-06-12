@@ -34,7 +34,8 @@ import json
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+from hermes_constants import get_hermes_source_root
+REPO_ROOT = get_hermes_source_root()
 
 
 def _root_package_json() -> dict:

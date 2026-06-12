@@ -35,7 +35,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+from hermes_constants import get_hermes_source_root
+_PROJECT_ROOT = get_hermes_source_root()
 sys.path.insert(0, str(_PROJECT_ROOT))
 try:
     from hermes_constants import get_hermes_home
@@ -46,7 +47,7 @@ except ImportError:
 
 DEFAULT_TUI_DIR = Path(
     os.environ.get("HERMES_TUI_DIR")
-    or str(Path(__file__).resolve().parent.parent / "ui-tui")
+    or str(_PROJECT_ROOT / "ui-tui")
 )
 DEFAULT_LOG = Path(os.environ.get("HERMES_PERF_LOG", str(get_hermes_home() / "perf.log")))
 DEFAULT_STATE_DB = get_hermes_home() / "state.db"

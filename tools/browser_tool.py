@@ -1803,7 +1803,8 @@ def _find_agent_browser() -> str:
     # WinError 193 "%1 is not a valid Win32 application". We must resolve to the
     # `.cmd` shim instead. `shutil.which` consults PATHEXT, so we delegate to it
     # with an explicit path so POSIX hosts still pick the extensionless shim.
-    repo_root = Path(__file__).parent.parent
+    from hermes_constants import get_hermes_source_root
+    repo_root = get_hermes_source_root()
     local_bin_dir = repo_root / "node_modules" / ".bin"
     if local_bin_dir.is_dir():
         local_which = shutil.which("agent-browser", path=str(local_bin_dir))

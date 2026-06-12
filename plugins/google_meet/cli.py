@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from hermes_cli.managed_uv import get_pip_cmd
+from hermes_cli.managed_uv import pip_install
 from hermes_constants import get_hermes_home
 
 from plugins.google_meet import process_manager as pm
@@ -251,16 +251,9 @@ def _cmd_install(*, realtime: bool, assume_yes: bool) -> int:
     # 1) pip deps — always safe, venv-scoped.
     pip_pkgs = ["playwright", "websockets"]
     print(f"\n[1/3] pip install: {' '.join(pip_pkgs)}")
-    try:
-        res = _sp.run(
-            get_pip_cmd() + ["install", "--upgrade", *pip_pkgs],
-            check=False,
-        )
-        if res.returncode != 0:
-            print("  pip install failed")
-            return 1
-    except Exception as e:
-        print(f"  pip install failed: {e}")
+    res = pip_install(pip_pkgs, upgrade=True, capture_output=False)
+    if res.returncode != 0:
+        print("  pip install failed")
         return 1
 
     # 2) Playwright browsers — pulls chromium (~300MB first run).

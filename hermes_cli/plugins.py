@@ -62,7 +62,8 @@ def get_bundled_plugins_dir() -> Path:
     env_override = os.getenv("HERMES_BUNDLED_PLUGINS")
     if env_override:
         return Path(env_override)
-    return Path(__file__).resolve().parent.parent / "plugins"
+    from hermes_constants import get_hermes_source_root
+    return get_hermes_source_root() / "plugins"
 
 try:
     import yaml

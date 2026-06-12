@@ -379,7 +379,8 @@ def detect_install_method(project_root: Optional[Path] = None) -> str:
     if managed:
         return managed.lower().replace(" ", "-")
     if project_root is None:
-        project_root = Path(__file__).parent.parent.resolve()
+        from hermes_constants import get_hermes_source_root
+        project_root = get_hermes_source_root()
     if (project_root / ".git").is_dir():
         return "git"
     return "pip"
@@ -435,9 +436,10 @@ def recommended_update_command_for_method(method: str) -> str:
         if is_uv_tool_install():
             return "uv tool upgrade hermes-agent"
         import shutil
-        if shutil.which("uv"):
-            return "uv pip install --upgrade hermes-agent"
-        return "pip install --upgrade hermes-agent"
+        if shutil.which("pipx") and "pipx" in __import__("sys").prefix.split(__import__("os").sep):
+            return "pipx upgrade hermes-agent"
+        # PyPI-based installs are no longer supported — direct to the installer.
+        return "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"
     return "hermes update"
 
 
@@ -600,9 +602,6 @@ def get_env_path() -> Path:
     """Get the .env file path (for API keys)."""
     return get_hermes_home() / ".env"
 
-def get_project_root() -> Path:
-    """Get the project installation directory."""
-    return Path(__file__).parent.parent.resolve()
 
 def _resolve_hermes_uid_gid() -> tuple[Optional[int], Optional[int]]:
     """Read the HERMES_UID / HERMES_GID env vars set by Docker deployments.
@@ -5931,6 +5930,8 @@ def redact_key(key: str) -> str:
 
 def show_config():
     """Display current configuration."""
+    from hermes_constants import get_hermes_source_root
+
     config = load_config()
     
     print()
@@ -5943,7 +5944,7 @@ def show_config():
     print(color("◆ Paths", Colors.CYAN, Colors.BOLD))
     print(f"  Config:       {get_config_path()}")
     print(f"  Secrets:      {get_env_path()}")
-    print(f"  Install:      {get_project_root()}")
+    print(f"  Install:      {get_hermes_source_root()}")
     
     # API Keys
     print()

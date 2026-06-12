@@ -25,9 +25,7 @@ def log_success(msg: str):
 def log_warn(msg: str):
     print(f"{color('⚠', Colors.YELLOW)} {msg}")
 
-def get_project_root() -> Path:
-    """Get the project installation directory."""
-    return Path(__file__).parent.parent.resolve()
+
 
 
 def find_shell_configs() -> list:
@@ -572,7 +570,8 @@ def run_uninstall(args):
     - Full uninstall: removes code + ~/.hermes/ (configs, data, logs)
     - Keep data: removes code but keeps ~/.hermes/ for future reinstall
     """
-    project_root = get_project_root()
+    from hermes_constants import get_hermes_source_root
+    project_root = get_hermes_source_root()
     hermes_home = get_hermes_home()
 
     # Detect named profiles when uninstalling from the default root —

@@ -895,7 +895,8 @@ os.environ["_HERMES_GATEWAY"] = "1"
 _ensure_ssl_certs()
 
 # Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from hermes_constants import get_hermes_source_root
+sys.path.insert(0, str(get_hermes_source_root()))
 
 # Resolve Hermes home directory (respects HERMES_HOME override)
 from hermes_constants import get_hermes_home
@@ -1551,7 +1552,8 @@ def _check_unavailable_skill(command_name: str) -> str | None:
 
         # Check optional skills (shipped with repo but not installed)
         from hermes_constants import get_optional_skills_dir
-        repo_root = Path(__file__).resolve().parent.parent
+        from hermes_constants import get_hermes_source_root
+        repo_root = get_hermes_source_root()
         optional_dir = get_optional_skills_dir(repo_root / "optional-skills")
         if optional_dir.exists():
             for skill_md in optional_dir.rglob("SKILL.md"):
@@ -6085,7 +6087,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         elif platform == Platform.SLACK:
             from gateway.platforms.slack import SlackAdapter, check_slack_requirements
             if not check_slack_requirements():
-                logger.warning("Slack: slack-bolt not installed. Run: pip install 'hermes-agent[slack]'")
+                logger.warning("Slack: slack-bolt not installed. Run: uv pip install -e '.[slack]'  (from the hermes-agent checkout)")
                 return None
             return SlackAdapter(config)
 

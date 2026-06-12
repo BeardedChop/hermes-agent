@@ -68,7 +68,7 @@ import sys
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
-from hermes_cli.managed_uv import get_pip_cmd
+from hermes_cli.managed_uv import pip_install
 from utils import atomic_replace
 # after the in-tree → plugin migration. See adapter.py for context.
 logger = logging.getLogger("gateway.platforms.google_chat_user_oauth")
@@ -380,16 +380,15 @@ def install_deps() -> bool:
 
     print("Installing Google Chat OAuth dependencies...")
     try:
-        subprocess.check_call(
-            get_pip_cmd() + ["install", "--quiet"] + _REQUIRED_PACKAGES,
-            stdout=subprocess.DEVNULL,
-        )
+        result = pip_install(_REQUIRED_PACKAGES, quiet=True)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(result.returncode, result.args)
         print("Dependencies installed.")
         return True
     except subprocess.CalledProcessError as exc:
         print(f"ERROR: Failed to install dependencies: {exc}")
         print("Or install via the optional extra:")
-        print("  pip install 'hermes-agent[google_chat]'")
+        print("  uv pip install -e '.[google_chat]'  # from the hermes-agent checkout")
         return False
 
 

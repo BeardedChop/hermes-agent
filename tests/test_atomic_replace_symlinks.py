@@ -21,7 +21,8 @@ import pytest
 import yaml
 
 # Ensure the repo root is importable when running via `pytest tests/...`.
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+from hermes_constants import get_hermes_source_root
+_REPO_ROOT = get_hermes_source_root()
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 

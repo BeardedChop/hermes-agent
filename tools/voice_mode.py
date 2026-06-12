@@ -6,7 +6,7 @@ sounddevice or system audio players.
 
 Dependencies (optional):
     pip install sounddevice numpy
-    or: pip install hermes-agent[voice]
+    or: uv pip install -e '.[voice]'  # from the hermes-agent checkout
 """
 
 import logging

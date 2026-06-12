@@ -268,7 +268,8 @@ def check_for_updates() -> Optional[int]:
         # Prefer the running code's location over the profile-scoped path.
         # $HERMES_HOME/hermes-agent/ may be a stale copy from --clone-all;
         # Path(__file__) always resolves to the actual installed checkout.
-        repo_dir = Path(__file__).parent.parent.resolve()
+        from hermes_constants import get_hermes_source_root
+        repo_dir = get_hermes_source_root()
         if not (repo_dir / ".git").exists():
             repo_dir = hermes_home / "hermes-agent"
         if not (repo_dir / ".git").exists():
@@ -293,7 +294,8 @@ def _resolve_repo_dir() -> Optional[Path]:
     because ``$HERMES_HOME/hermes-agent/`` may be a stale copy carried
     over by ``--clone-all``.
     """
-    repo_dir = Path(__file__).parent.parent.resolve()
+    from hermes_constants import get_hermes_source_root
+    repo_dir = get_hermes_source_root()
     if not (repo_dir / ".git").exists():
         hermes_home = get_hermes_home()
         repo_dir = hermes_home / "hermes-agent"
@@ -728,17 +730,15 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
     except Exception:
         pass  # Never break the banner over an update check
 
-    # Pip-install warning — `pip install hermes-agent` is not the supported
-    # install path (it exists on PyPI for internal/CI reasons, not end users).
-    # Such installs miss the git checkout + installer-managed deps, so updates,
-    # self-update, and issue triage don't behave correctly. Warn, don't block.
+    # PyPI install warning — `pip install hermes-agent` is not a supported
+    # install path. Direct users to the official installer.
     try:
         from hermes_cli.config import detect_install_method
         if detect_install_method() == "pip":
             right_lines.append(
-                "[bold yellow]⚠ pip install not officially supported[/]"
-                "[dim yellow] — exists for reasons other than user install; "
-                "expect instability and an inability to support issues[/]"
+                "[bold yellow]⚠ the hermes-agent python package is no longer supported[/]"
+                "[dim yellow] please reinstall via our official installer "
+                "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash[/]"
             )
     except Exception:
         pass  # Never break the banner over the install-method check

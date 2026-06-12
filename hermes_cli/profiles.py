@@ -900,7 +900,8 @@ def seed_profile_skills(profile_dir: Path, quiet: bool = False) -> Optional[dict
             "user_modified": [],
             "skipped_opt_out": True,
         }
-    project_root = Path(__file__).parent.parent.resolve()
+    from hermes_constants import get_hermes_source_root
+    project_root = get_hermes_source_root()
     try:
         result = subprocess.run(
             [sys.executable, "-c",

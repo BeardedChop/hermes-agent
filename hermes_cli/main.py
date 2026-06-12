@@ -320,7 +320,8 @@ def _require_tty(command_name: str) -> None:
 
 
 # Add project root to path
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+from hermes_constants import get_hermes_source_root
+PROJECT_ROOT = get_hermes_source_root()
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
@@ -4516,10 +4517,10 @@ def _nixos_build_env() -> dict[str, str] | None:
         return None
 
     # Tier 1: fast path — hermes venv python3, no nix-shell overhead
-    for venv_name in ("venv", ".venv"):
-        venv_python = PROJECT_ROOT / venv_name / "bin" / "python3"
-        if venv_python.exists():
-            return {**os.environ, "PYTHON": str(venv_python)}
+    from hermes_cli.managed_uv import get_venv_path as _gvp
+    venv_python = _gvp() / "bin" / "python3"
+    if venv_python.exists():
+        return {**os.environ, "PYTHON": str(venv_python)}
 
     # Tier 2: nix-shell fallback — resolves the absolute python3 path once.
     # Slower (~2–5 s for the nix-shell eval) but always works, even without
@@ -5778,14 +5779,14 @@ def _update_via_zip(args):
     # individually so update does not silently strip working capabilities.
     print("→ Updating Python dependencies...")
 
-    from hermes_cli.managed_uv import ensure_uv, get_pip_cmd, update_managed_uv
+    from hermes_cli.managed_uv import ensure_uv, update_managed_uv
 
     # Keep managed uv current — runs `uv self update` if we already have one.
     update_managed_uv()
 
     uv_bin = ensure_uv()
     if not uv_bin:
-        uv_bin = _ensure_uv_for_termux(get_pip_cmd())
+        uv_bin = _ensure_uv_for_termux()
         
     if uv_bin:
         _install_python_dependencies_with_optional_fallback()
@@ -7014,7 +7015,9 @@ def _install_python_dependencies_with_optional_fallback(
     copies (Windows blocks REPLACE on a running .exe but allows RENAME). See
     ``_quarantine_running_hermes_exe`` for the rationale.
     
-    Uses the authoritative `get_pip_cmd()` for dependency installation.
+    Uses ``get_pip_cmd()`` for dependency installation — this function builds
+    non-standard install commands (``-e .[group]``, ``--user``, etc.) that
+    don't fit the ``pip_install()`` helper's signature.
     """
     from hermes_cli.managed_uv import get_pip_cmd
     
@@ -7287,7 +7290,6 @@ def _is_android_python() -> bool:
 
 
 def _install_psutil_android_compat(
-    install_cmd_prefix: list[str],
     *,
     env: dict[str, str] | None = None,
 ) -> None:
@@ -7316,13 +7318,14 @@ def _install_psutil_android_compat(
         urllib.request.urlretrieve(PSUTIL_URL, archive)
         src_root = prepare_patched_psutil_sdist(archive, tmp_path)
 
+        from hermes_cli.managed_uv import get_pip_cmd as _gpc
         _run_install_with_heartbeat(
-            install_cmd_prefix + ["install", "--no-build-isolation", str(src_root)],
+            _gpc() + ["install", "--no-build-isolation", str(src_root)],
             env=env,
         )
 
 
-def _ensure_uv_for_termux(pip_cmd: list[str]) -> str | None:
+def _ensure_uv_for_termux() -> str | None:
     """Best-effort uv bootstrap on Termux for faster update installs.
 
     The normal path (``ensure_uv()`` in managed_uv) installs the managed
@@ -7339,7 +7342,8 @@ def _ensure_uv_for_termux(pip_cmd: list[str]) -> str | None:
         return None
     try:
         print("  → Termux detected: trying to install uv for faster dependency updates...")
-        subprocess.run(pip_cmd + ["install", "uv"], cwd=PROJECT_ROOT, check=False)
+        from hermes_cli.managed_uv import get_pip_cmd as _gpc
+        subprocess.run(_gpc() + ["install", "uv"], cwd=PROJECT_ROOT, check=False)
     except Exception:
         pass
     # After pip install, check managed path first, then PATH
@@ -7993,30 +7997,28 @@ def cmd_update(args):
 
 
 def _cmd_update_pip(args):
-    """Update Hermes via pip (for PyPI installs)."""
+    """Update Hermes via its managed install path.
+
+    - ``uv tool install`` / ``uv tool upgrade`` path: use ``uv tool upgrade hermes-agent``.
+    - ``pipx`` path: use ``pipx upgrade hermes-agent``.
+    - Direct git-checkout (standard install.sh path): delegate to the git-based
+      ``_cmd_update_impl`` which pulls, reinstalls deps, etc.
+    - Plain ``pip install hermes-agent`` from PyPI is no longer supported.
+      Users on that path should reinstall via the official installer.
+    """
     from hermes_cli import __version__
     from hermes_cli.config import is_uv_tool_install
 
     print(f"→ Current version: {__version__}")
-    print("→ Checking PyPI for updates...")
 
-    from hermes_cli.managed_uv import ensure_uv, get_pip_cmd, update_managed_uv
+    from hermes_cli.managed_uv import ensure_uv, update_managed_uv
 
     # Keep managed uv current before using it.
     update_managed_uv()
 
     uv = ensure_uv()
-    in_venv = sys.prefix != sys.base_prefix
-    # pipx-managed installs live under .../pipx/venvs/<name>/...
     pipx_managed = "pipx" in sys.prefix.split(os.sep)
     pipx = shutil.which("pipx") if pipx_managed else None
-
-    # Only the ``uv pip install`` path inside a venv needs VIRTUAL_ENV
-    # exported (uv refuses to install without it when the launcher shim
-    # didn't activate the venv). ``uv tool upgrade`` / ``pipx upgrade``
-    # operate on a named environment and ignore VIRTUAL_ENV, so we don't
-    # set it for them.
-    export_virtualenv = False
 
     if is_uv_tool_install():
         if not uv:
@@ -8024,33 +8026,30 @@ def _cmd_update_pip(args):
             print("  Install uv manually: https://docs.astral.sh/uv/getting-started/installation/")
             sys.exit(1)
         cmd = [uv, "tool", "upgrade", "hermes-agent"]
+        print(f"→ Running: {' '.join(cmd)}")
+        result = subprocess.run(cmd)
     elif pipx_managed and pipx:
         # pipx owns its own venv; ``pipx upgrade`` is the only correct path.
-        # Matches scripts/auto-update.sh, which already uses pipx upgrade.
         cmd = [pipx, "upgrade", "hermes-agent"]
-    elif uv:
-        cmd = [uv, "pip", "install", "--upgrade", "hermes-agent"]
-        if in_venv:
-            # Launcher shim runs the venv interpreter but doesn't export
-            # VIRTUAL_ENV; without it uv errors "No virtual environment found".
-            export_virtualenv = True
-        else:
-            # Outside any venv, ``--system`` lets uv target the active
-            # interpreter, matching pip's default behaviour.
-            cmd.insert(3, "--system")
+        print(f"→ Running: {' '.join(cmd)}")
+        result = subprocess.run(cmd)
     else:
-        cmd = get_pip_cmd() + ["install", "--upgrade", "hermes-agent"]
+        # Not a uv-tool or pipx install.  The supported path is the git
+        # checkout created by install.sh — it has a .git dir and uses
+        # ``hermes update`` (the git-pull + reinstall path) not pip.
+        # A raw ``pip install hermes-agent`` from PyPI is no longer supported.
+        print("✗ Cannot update: PyPI-based installs (pip install hermes-agent) are no longer supported.")
+        print()
+        print("  Please reinstall using the official installer, then use `hermes update`:")
+        print("    curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash")
+        sys.exit(1)
 
-    print(f"→ Running: {' '.join(cmd)}")
-    run_kwargs = {}
-    if export_virtualenv:
-        run_kwargs["env"] = {**os.environ, "VIRTUAL_ENV": sys.prefix}
-    result = subprocess.run(cmd, **run_kwargs)
     if result.returncode != 0:
         print("✗ Update failed")
         sys.exit(1)
 
     print("✓ Update complete! Restart hermes to use the new version.")
+
 
 
 def _cmd_update_impl(args, gateway_mode: bool):
@@ -8459,7 +8458,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
         # the install + core-dependency verification completes below.
         _write_update_incomplete_marker()
         print("→ Updating Python dependencies...")
-        from hermes_cli.managed_uv import ensure_uv, get_pip_cmd, update_managed_uv
+        from hermes_cli.managed_uv import ensure_uv, update_managed_uv
 
         # Keep managed uv current — runs `uv self update` if we already have one.
         update_managed_uv()
@@ -8473,7 +8472,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
                 print("  → Termux detected: using uv + curated termux-all optional profile...")
             if _is_termux_env() and _is_android_python():
                 print("  → Termux/Android detected: prebuilding psutil with Linux source path compatibility...")
-                _install_psutil_android_compat(get_pip_cmd())
+                _install_psutil_android_compat()
             _install_python_dependencies_with_optional_fallback(group=install_group)
         else:
             # Degenerate fallback: managed uv failed to install.
@@ -8484,7 +8483,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
                     print("  → Termux detected: using curated termux-all optional profile...")
                 if _is_termux_env() and _is_android_python():
                     print("  → Termux/Android detected: prebuilding psutil with Linux source path compatibility...")
-                    _install_psutil_android_compat(get_pip_cmd())
+                    _install_psutil_android_compat()
                 _install_python_dependencies_with_optional_fallback(group=install_group)
             else:
                 # Ultimate degenerate fallback: no uv at all.
@@ -8493,7 +8492,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
                     print("  → Termux detected: using curated termux-all optional profile...")
                 if _is_termux_env() and _is_android_python():
                     print("  → Termux/Android detected: prebuilding psutil with Linux source path compatibility...")
-                    _install_psutil_android_compat(get_pip_cmd())
+                    _install_psutil_android_compat()
                 _install_python_dependencies_with_optional_fallback(group=install_group)
 
         # Core Python deps installed AND verified (the fallback helper runs

@@ -283,14 +283,51 @@ def get_pip_cmd() -> list[str]:
 
 def get_venv_root() -> Path:
     """Return the root path of the active virtual environment.
-    
+
     Prefers `sys.prefix` (the standard Python way to identify a venv).
-    Falls back to the parent of the parent of `sys.executable` 
+    Falls back to the parent of the parent of `sys.executable`
     (e.g., `/path/to/venv/bin/python` -> `/path/to/venv`).
     """
     if sys.prefix != sys.base_prefix:
         return Path(sys.prefix)
     return Path(sys.executable).parent.parent
+
+
+def get_venv_path() -> Path:
+    """Return the project's virtual environment directory.
+
+    This is the single authoritative way to locate the Hermes venv on disk.
+    Previously scattered as ``PROJECT_ROOT / "venv"`` or ``PROJECT_ROOT / ".venv"``
+    throughout the codebase.
+
+    Resolution order:
+    1. The active venv (``sys.prefix``) when hermes is running inside one.
+       This covers every production layout:
+         - dev checkout:           <checkout>/.venv  or  <checkout>/venv
+         - normal user install:    ~/.hermes/hermes-agent/venv
+         - root/system install:    /usr/local/lib/hermes-agent/venv
+         - docker:                 /opt/hermes/.venv
+         - nix package install:    /nix/store/<hash>-hermes-agent-python3.12-env
+         - nix devshell:           <checkout>/.venv
+       Hermes is always invoked through its own venv wrapper, so sys.prefix
+       reliably points to the right place.
+    2. ``<source_root>/.venv`` if it exists on disk (pre-activation fallback).
+    3. ``<source_root>/venv`` if it exists on disk.
+    4. ``<source_root>/venv`` as the canonical default (may not exist yet,
+       e.g. before the first install run).
+    """
+    # we're unning inside a venv
+    if sys.prefix != sys.base_prefix:
+        return Path(sys.prefix).resolve()
+
+    # we're not in a venv, probe conventional names under the source root
+    from hermes_constants import get_hermes_source_root
+    source_root = get_hermes_source_root()
+    for name in (".venv", "venv"):
+        candidate = source_root / name
+        if candidate.exists():
+            return candidate
+    return source_root / "venv"
 
 
 def pip_install(
@@ -300,21 +337,24 @@ def pip_install(
     timeout: int = 300,
     capture_output: bool = True,
     quiet: bool = False,
+    upgrade: bool = False,
 ) -> subprocess.CompletedProcess:
     """Install packages using the managed uv binary (with degenerate pip fallback).
-    
+
     This is the single, authoritative way to install Python dependencies in Hermes.
     It automatically:
     1. Resolves the correct venv root.
     2. Sets `VIRTUAL_ENV` and prepends the venv `bin` to `PATH`.
-    3. Strips `PYTHONPATH` and `PYTHONHOME` to prevent venv contamination 
+    3. Strips `PYTHONPATH` and `PYTHONHOME` to prevent venv contamination
        (critical for Termux/Android compatibility).
     4. Uses `get_pip_cmd()` to guarantee the managed uv binary is used.
     """
     if venv_root is None:
         venv_root = get_venv_root()
-        
+
     cmd = get_pip_cmd() + ["install"]
+    if upgrade:
+        cmd.append("--upgrade")
     if quiet:
         cmd.append("--quiet")
     cmd.extend(packages)

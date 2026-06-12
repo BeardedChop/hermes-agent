@@ -115,7 +115,8 @@ def _locales_dir() -> Path:
         )
 
     # agent/i18n.py -> agent/ -> repo root (source checkout, editable install)
-    source_dir = Path(__file__).resolve().parent.parent / "locales"
+    from hermes_constants import get_hermes_source_root
+    source_dir = get_hermes_source_root() / "locales"
     if source_dir.is_dir():
         return source_dir
 

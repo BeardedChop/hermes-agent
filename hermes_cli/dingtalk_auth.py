@@ -21,7 +21,7 @@ import logging
 from typing import Optional, Tuple
 
 import requests
-from hermes_cli.managed_uv import get_pip_cmd
+from hermes_cli.managed_uv import pip_install
 
 logger = logging.getLogger(__name__)
 
@@ -165,17 +165,13 @@ def _ensure_qrcode_installed() -> bool:
 
     import subprocess
 
-    # Try uv first (Hermes convention), then pip
-    for cmd in (
-        get_pip_cmd() + ["install", "qrcode"],
-        get_pip_cmd() + ["install", "-q", "qrcode"],
-    ):
+    result = pip_install(["qrcode"], quiet=True)
+    if result.returncode == 0:
         try:
-            subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             import qrcode  # noqa: F401,F811
             return True
-        except (subprocess.CalledProcessError, ImportError, FileNotFoundError):
-            continue
+        except ImportError:
+            pass
     return False
 
 

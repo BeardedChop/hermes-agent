@@ -57,12 +57,14 @@ def _get_bundled_dir() -> Path:
     then a wheel-installed data dir, then falls back to the relative
     path from this source file.
     """
-    return get_bundled_skills_dir(Path(__file__).parent.parent / "skills")
+    from hermes_constants import get_hermes_source_root
+    return get_bundled_skills_dir(get_hermes_source_root() / "skills")
 
 
 def _get_optional_dir() -> Path:
     """Locate the official optional-skills/ directory."""
-    return get_optional_skills_dir(Path(__file__).parent.parent / "optional-skills")
+    from hermes_constants import get_hermes_source_root
+    return get_optional_skills_dir(get_hermes_source_root() / "optional-skills")
 
 
 def _read_manifest() -> Dict[str, str]:

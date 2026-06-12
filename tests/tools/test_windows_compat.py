@@ -16,7 +16,8 @@ GUARDED_FILES = [
     "gateway/platforms/whatsapp.py",
 ]
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+from hermes_constants import get_hermes_source_root
+PROJECT_ROOT = get_hermes_source_root()
 
 
 def _get_preexec_fn_values(filepath: Path) -> list:

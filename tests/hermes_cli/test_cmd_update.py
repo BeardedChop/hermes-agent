@@ -71,42 +71,41 @@ def _patch_managed_uv(request):
 
 
 class TestCmdUpdatePip:
-    """Regression tests for pip-install update flows."""
+    """Tests for pip-install update flows."""
 
     @patch("shutil.which", return_value="/usr/bin/uv")
     @patch("subprocess.run")
-    def test_update_pip_exports_virtualenv_from_sys_prefix(
+    def test_update_pip_uv_tool_upgrade(
         self, mock_run, _mock_which, mock_args, monkeypatch
     ):
+        """uv-tool installs still use uv tool upgrade."""
         from hermes_cli import main as hm
 
         mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
-        monkeypatch.delenv("VIRTUAL_ENV", raising=False)
-        monkeypatch.setattr(hm.sys, "prefix", "/tmp/hermes-launcher-venv")
-        monkeypatch.setattr(hm.sys, "base_prefix", "/usr")
-
-        hm._cmd_update_pip(mock_args)
+        with patch("hermes_cli.config.is_uv_tool_install", return_value=True):
+            hm._cmd_update_pip(mock_args)
 
         assert mock_run.call_count == 1
-        assert mock_run.call_args.args[0] == ["/usr/bin/uv", "pip", "install", "--upgrade", "hermes-agent"]
-        assert mock_run.call_args.kwargs["env"]["VIRTUAL_ENV"] == "/tmp/hermes-launcher-venv"
+        assert mock_run.call_args.args[0] == ["/usr/bin/uv", "tool", "upgrade", "hermes-agent"]
 
     @patch("shutil.which", return_value="/usr/bin/uv")
-    @patch("subprocess.run")
-    def test_update_pip_does_not_export_virtualenv_for_system_python(
-        self, mock_run, _mock_which, mock_args, monkeypatch
+    def test_update_pip_plain_pypi_install_exits_with_error(
+        self, _mock_which, mock_args, monkeypatch, capsys
     ):
+        """Plain pip install (not uv-tool, not pipx) now exits with a helpful error."""
         from hermes_cli import main as hm
 
-        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
-        monkeypatch.delenv("VIRTUAL_ENV", raising=False)
-        monkeypatch.setattr(hm.sys, "prefix", "/usr")
+        monkeypatch.setattr(hm.sys, "prefix", "/tmp/some-venv")
         monkeypatch.setattr(hm.sys, "base_prefix", "/usr")
 
-        hm._cmd_update_pip(mock_args)
+        with patch("hermes_cli.config.is_uv_tool_install", return_value=False), \
+             pytest.raises(SystemExit) as exc_info:
+            hm._cmd_update_pip(mock_args)
 
-        assert mock_run.call_count == 1
-        assert "env" not in mock_run.call_args.kwargs
+        assert exc_info.value.code == 1
+        out = capsys.readouterr().out
+        assert "no longer supported" in out
+        assert "hermes-agent.nousresearch.com/install.sh" in out
 
 
 class TestCmdUpdateBranchFallback:

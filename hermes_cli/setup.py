@@ -22,7 +22,7 @@ import copy
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from hermes_cli.managed_uv import get_pip_cmd
+from hermes_cli.managed_uv import pip_install
 from hermes_cli.nous_subscription import get_nous_subscription_features
 from tools.tool_backend_helpers import managed_nous_tools_enabled
 from utils import base_url_hostname
@@ -30,7 +30,8 @@ from hermes_constants import get_optional_skills_dir
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+from hermes_constants import get_hermes_source_root
+PROJECT_ROOT = get_hermes_source_root()
 
 _DOCS_BASE = "https://hermes-agent.nousresearch.com/docs"
 
@@ -798,10 +799,8 @@ def _install_neutts_deps() -> bool:
     print_info("This will also download the TTS model (~300MB) on first use.")
     print()
     try:
-        subprocess.run(
-            get_pip_cmd() + ["install", "-U", "neutts[all]", "--quiet"],
-            check=True, timeout=300,
-        )
+        result = pip_install(["neutts[all]"], quiet=True, upgrade=True, timeout=300)
+        result.check_returncode()
         print_success("neutts installed successfully")
         return True
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
@@ -823,10 +822,8 @@ def _install_kittentts_deps() -> bool:
     print_info("Installing kittentts Python package (~25-80MB model downloaded on first use)...")
     print()
     try:
-        subprocess.run(
-            get_pip_cmd() + ["install", "-U", wheel_url, "soundfile", "--quiet"],
-            check=True, timeout=300,
-        )
+        result = pip_install([wheel_url, "soundfile"], quiet=True, upgrade=True, timeout=300)
+        result.check_returncode()
         print_success("kittentts installed successfully")
         return True
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
@@ -1287,11 +1284,7 @@ def setup_terminal_backend(config: dict):
                         text=True,
                     )
                 else:
-                    result = subprocess.run(
-                        get_pip_cmd() + ["install", "modal"],
-                        capture_output=True,
-                        text=True,
-                    )
+                    result = pip_install(["modal"])
                 if result.returncode == 0:
                     print_success("modal SDK installed")
                 else:
@@ -1340,11 +1333,7 @@ def setup_terminal_backend(config: dict):
                     text=True,
                 )
             else:
-                result = subprocess.run(
-                    get_pip_cmd() + ["install", "daytona"],
-                    capture_output=True,
-                    text=True,
-                )
+                result = pip_install(["daytona"])
             if result.returncode == 0:
                 print_success("daytona SDK installed")
             else:
@@ -1990,10 +1979,7 @@ def _setup_matrix():
                         capture_output=True, text=True,
                     )
                 else:
-                    result = subprocess.run(
-                        get_pip_cmd() + ["install", matrix_pkg],
-                        capture_output=True, text=True,
-                    )
+                    result = pip_install([matrix_pkg])
                 if result.returncode == 0:
                     print_success(f"{matrix_pkg} installed")
                 else:

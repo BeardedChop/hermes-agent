@@ -74,7 +74,8 @@ def test_grandchild_leak_is_killed_by_runner(tmp_path: Path) -> None:
     3. Wait for the grandchild PID to vanish (poll for ~5s).
     4. Assert the runner exited cleanly AND the grandchild is dead.
     """
-    repo_root = Path(__file__).resolve().parent.parent
+    from hermes_constants import get_hermes_source_root
+    repo_root = get_hermes_source_root()
     runner = repo_root / "scripts" / "run_tests_parallel.py"
     assert runner.exists(), f"runner missing at {runner}"
 
@@ -196,7 +197,8 @@ import importlib.util as _importlib_util  # noqa: E402
 
 def _load_runner_module():
     """Import scripts/run_tests_parallel.py as a module for in-process tests."""
-    repo_root = Path(__file__).resolve().parent.parent
+    from hermes_constants import get_hermes_source_root
+    repo_root = get_hermes_source_root()
     path = repo_root / "scripts" / "run_tests_parallel.py"
     spec = _importlib_util.spec_from_file_location("_rtp_under_test", path)
     mod = _importlib_util.module_from_spec(spec)

@@ -31,6 +31,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from hermes_constants import get_hermes_source_root as _repo_root
+
 
 # ---------------------------------------------------------------------------
 # OpenAI SDK construction preserves the callable
@@ -245,8 +247,7 @@ class TestBatchRunnerCallableHandling:
         """Pin the predicate string in batch_runner so refactors that
         change it are caught here. Reading the source rather than
         importing avoids spinning up the full BatchRunner."""
-        from pathlib import Path
-        src = (Path(__file__).resolve().parent.parent.parent
+        src = (_repo_root()
                / "batch_runner.py").read_text()
         assert "callable(self.api_key) and not isinstance(self.api_key, str)" in src, (
             "BatchRunner.api_key callable check changed — update test or "
@@ -278,7 +279,7 @@ class TestCliEnsureRuntimeCredentialsCallable:
         # ``_ensure_runtime_credentials`` was extracted from cli.py into the
         # ``CLIAgentSetupMixin`` (god-file decomposition Phase 4). Read the
         # module the method actually lives in now.
-        src = (Path(__file__).resolve().parent.parent.parent
+        src = (_repo_root()
                / "hermes_cli" / "cli_agent_setup_mixin.py").read_text()
         # The fix introduces ``_is_callable_provider`` which gates the
         # string-only check so callable token providers survive.
@@ -305,8 +306,7 @@ class TestInlinedDisplayMasks:
         client init paths must guard their banner prints with
         ``is_token_provider`` so a callable Entra ID provider doesn't
         crash ``len(api_key)``."""
-        from pathlib import Path
-        src = (Path(__file__).resolve().parent.parent.parent
+        src = (_repo_root()
                / "agent" / "agent_init.py").read_text()
         assert src.count("is_token_provider(") >= 2, (
             "agent/agent_init.py must guard BOTH masked-banner paths "
@@ -325,8 +325,7 @@ class TestInlinedDisplayMasks:
         callable Entra ID providers. The inlined version uses
         ``is_token_provider`` and prints the same static label as the
         run_agent banners."""
-        from pathlib import Path
-        src = (Path(__file__).resolve().parent.parent.parent
+        src = (_repo_root()
                / "cli.py").read_text()
         assert "is_token_provider(self.api_key)" in src, (
             "cli.HermesCLI.show_config must guard self.api_key via "
@@ -346,8 +345,7 @@ class TestInlinedDisplayMasks:
         defensively the helper must also accept a callable directly
         and return the placeholder rather than crashing on
         ``len(callable)``."""
-        from pathlib import Path
-        src = (Path(__file__).resolve().parent.parent.parent
+        src = (_repo_root()
                / "run_agent.py").read_text()
         # The function now starts with a callable check.
         assert (
@@ -365,8 +363,7 @@ class TestInlinedDisplayMasks:
         was extracted after this feature was first written). It used
         to do ``key[:12]`` on ``self._anthropic_api_key``. For Entra ID +
         Anthropic-style mode that's a callable; slicing crashes."""
-        from pathlib import Path
-        src = (Path(__file__).resolve().parent.parent.parent
+        src = (_repo_root()
                / "agent" / "conversation_loop.py").read_text()
         # The Anthropic 401 block now branches on is_token_provider
         # before slicing the key.

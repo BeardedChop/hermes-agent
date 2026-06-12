@@ -2924,10 +2924,10 @@ class OptionalSkillSource(SkillSource):
     """
 
     def __init__(self):
-        from hermes_constants import get_optional_skills_dir
+        from hermes_constants import get_optional_skills_dir, get_hermes_source_root
 
         self._optional_dir = get_optional_skills_dir(
-            Path(__file__).parent.parent / "optional-skills"
+            get_hermes_source_root() / "optional-skills"
         )
 
     def source_id(self) -> str:

@@ -37,6 +37,7 @@ import sys
 from pathlib import Path
 
 from providers.base import OMIT_TEMPERATURE, ProviderProfile  # noqa: F401
+from hermes_constants import get_hermes_source_root
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ _discovered = False
 
 # Repo-root ``plugins/model-providers/`` — populated at discovery time.
 _BUNDLED_PLUGINS_DIR = (
-    Path(__file__).resolve().parent.parent / "plugins" / "model-providers"
+    get_hermes_source_root() / "plugins" / "model-providers"
 )
 
 

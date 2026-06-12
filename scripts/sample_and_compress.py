@@ -360,7 +360,8 @@ def main(
     print(f"   Seed: {seed}")
     
     # Setup paths
-    base_dir = Path(__file__).parent.parent
+    from hermes_constants import get_hermes_source_root
+    base_dir = get_hermes_source_root()
     sampled_dir = base_dir / "data" / f"{output_name}_raw"
     compressed_dir = base_dir / "data" / f"{output_name}_batches"
     final_output = base_dir / "data" / f"{output_name}.jsonl"

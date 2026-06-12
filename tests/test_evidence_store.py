@@ -3,7 +3,8 @@ from pathlib import Path
 import importlib.util
 
 # Load the hyphenated script name dynamically
-repo_root = Path(__file__).parent.parent
+from hermes_constants import get_hermes_source_root
+repo_root = get_hermes_source_root()
 script_path = repo_root / "optional-skills" / "security" / "oss-forensics" / "scripts" / "evidence-store.py"
 
 spec = importlib.util.spec_from_file_location("evidence_store", str(script_path))

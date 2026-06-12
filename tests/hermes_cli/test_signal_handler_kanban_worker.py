@@ -210,9 +210,8 @@ def test_real_handler_uses_os_exit_for_kanban_workers():
     """
     import pathlib
 
-    cli_path = (
-        pathlib.Path(__file__).resolve().parent.parent.parent / "cli.py"
-    )
+    from hermes_constants import get_hermes_source_root
+    cli_path = get_hermes_source_root() / "cli.py"
     src = cli_path.read_text()
     # Locate the handler body.
     start = src.find("def _signal_handler_q(signum, frame):")

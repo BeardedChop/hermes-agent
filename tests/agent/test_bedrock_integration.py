@@ -258,7 +258,8 @@ class TestPackaging:
         import tomllib
         from pathlib import Path
 
-        content = (Path(__file__).parent.parent.parent / "pyproject.toml").read_text()
+        from hermes_constants import get_hermes_source_root
+        content = (get_hermes_source_root() / "pyproject.toml").read_text()
         return tomllib.loads(content)["project"]["optional-dependencies"]
 
     def test_bedrock_extra_exists(self):

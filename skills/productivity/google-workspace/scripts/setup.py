@@ -37,7 +37,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from hermes_cli.managed_uv import get_pip_cmd
+from hermes_cli.managed_uv import pip_install
 from pathlib import Path
 
 # Ensure sibling modules (_hermes_home) are importable when run standalone.
@@ -116,10 +116,9 @@ def install_deps():
 
     # First choice: pip in the current interpreter. Works for most installs.
     try:
-        subprocess.check_call(
-            get_pip_cmd() + ["install", "--quiet"] + REQUIRED_PACKAGES,
-            stdout=subprocess.DEVNULL,
-        )
+        result = pip_install(REQUIRED_PACKAGES, quiet=True)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(result.returncode, result.args)
         print("Dependencies installed.")
         return True
     except subprocess.CalledProcessError as e:
@@ -150,7 +149,7 @@ def install_deps():
         "On environments without pip (e.g. Nix, or the Hermes Docker image's "
         "uv-managed venv), install the optional extra instead:"
     )
-    print("  pip install 'hermes-agent[google]'")
+    print("  uv pip install -e '.[google]'  # from the hermes-agent checkout")
     print(f"Or manually: uv pip install {' '.join(REQUIRED_PACKAGES)}")
     return False
 

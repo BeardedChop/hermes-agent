@@ -11,6 +11,28 @@ from contextvars import ContextVar, Token
 from pathlib import Path
 
 
+# ---------------------------------------------------------------------------
+# Source-root helper — single source of truth for the repo / install root.
+# ---------------------------------------------------------------------------
+# ``hermes_constants.py`` lives at the repo root, so its parent *is* the root.
+# Every other module that previously did ``Path(__file__).parent.parent`` to
+# climb out of sub-packages (hermes_cli/, gateway/, tools/, …) should call
+# this instead.  Tests can monkeypatch it directly without touching __file__.
+
+def get_hermes_source_root() -> Path:
+    """Return the Hermes Agent source / installation root directory.
+
+    This is the single authoritative way to locate the project root.
+    Previously this was scattered across ~20 files as
+    ``Path(__file__).parent.parent.resolve()`` relative to each sub-package.
+
+    Returns the directory that contains ``pyproject.toml``, ``hermes_constants.py``,
+    ``hermes_cli/``, ``tools/``, etc.
+    """
+    return Path(__file__).resolve().parent
+
+
+
 _profile_fallback_warned: bool = False
 _UNSET = object()
 _HERMES_HOME_OVERRIDE: ContextVar[str | object] = ContextVar(

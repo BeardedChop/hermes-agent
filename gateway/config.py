@@ -213,7 +213,8 @@ class Platform(Enum):
         """Return names of bundled platform plugins under ``plugins/platforms/``."""
         names: set = set()
         try:
-            platforms_dir = Path(__file__).parent.parent / "plugins" / "platforms"
+            from hermes_constants import get_hermes_source_root
+            platforms_dir = get_hermes_source_root() / "plugins" / "platforms"
             if platforms_dir.is_dir():
                 for child in platforms_dir.iterdir():
                     if (

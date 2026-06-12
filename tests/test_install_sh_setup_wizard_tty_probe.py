@@ -20,7 +20,8 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+from hermes_constants import get_hermes_source_root
+REPO_ROOT = get_hermes_source_root()
 INSTALL_SH = REPO_ROOT / "scripts" / "install.sh"
 
 # Every function in scripts/install.sh that previously gated on a bare

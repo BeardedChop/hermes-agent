@@ -35,8 +35,6 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from hermes_cli.managed_uv import get_pip_cmd
-
 logger = logging.getLogger("agent.lsp.install")
 
 # Package-name → install-strategy hint registry.  Each entry is a
@@ -345,6 +343,9 @@ def _install_pip(pkg: str, bin_name: str) -> Optional[str]:
     pip_target.mkdir(parents=True, exist_ok=True)
     try:
         logger.info("[install] pip install --target %s %s", pip_target, pkg)
+        # pip_install() can't be used here — needs --target to install outside
+        # the venv into a custom staging dir for LSP tool console scripts.
+        from hermes_cli.managed_uv import get_pip_cmd
         proc = subprocess.run(
             get_pip_cmd() + ["install", "--target", str(pip_target), "--quiet", pkg],
             check=False,

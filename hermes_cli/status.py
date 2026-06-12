@@ -9,7 +9,8 @@ import sys
 import subprocess  # noqa: F401 — re-exported for tests that monkeypatch status.subprocess to guard against regressions
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+from hermes_constants import get_hermes_source_root
+PROJECT_ROOT = get_hermes_source_root()
 
 from hermes_cli.auth import AuthError, resolve_provider
 from hermes_cli.colors import Colors, color

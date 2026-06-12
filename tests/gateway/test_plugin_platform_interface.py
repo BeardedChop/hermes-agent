@@ -14,7 +14,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+from hermes_constants import get_hermes_source_root
+PROJECT_ROOT = get_hermes_source_root()
 PLATFORMS_DIR = PROJECT_ROOT / "plugins" / "platforms"
 
 

@@ -63,7 +63,6 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from hermes_constants import get_hermes_home
-from hermes_cli.managed_uv import get_pip_cmd
 
 logger = logging.getLogger(__name__)
 

@@ -739,7 +739,8 @@ def main() -> int:
             print(f"error: --slice must be I/N (e.g. 1/4), got: {slice_raw!r}", file=sys.stderr)
             sys.exit(2)
 
-    repo_root = Path(__file__).resolve().parent.parent
+    from hermes_constants import get_hermes_source_root
+    repo_root = get_hermes_source_root()
 
     # Resolve discovery roots: positional path args override --paths if any
     # were supplied, otherwise --paths (which itself defaults to 'tests').

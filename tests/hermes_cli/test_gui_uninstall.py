@@ -240,7 +240,7 @@ def test_run_uninstall_yes_keep_data_is_non_interactive(tmp_path, monkeypatch):
     # Stub every destructive external so the test only exercises the control
     # flow + the real GUI sweep (which is safe inside tmp_path).
     monkeypatch.setattr(uninstall, "get_hermes_home", lambda: hermes_home)
-    monkeypatch.setattr(uninstall, "get_project_root", lambda: fake_code)
+    monkeypatch.setattr(uninstall, "get_hermes_source_root", lambda: fake_code)
     monkeypatch.setattr(uninstall, "uninstall_gateway_service", lambda: False)
     monkeypatch.setattr(uninstall, "remove_path_from_shell_configs", lambda: [])
     monkeypatch.setattr(uninstall, "remove_wrapper_script", lambda: [])
@@ -274,7 +274,7 @@ def test_run_uninstall_yes_full_wipes_home(tmp_path, monkeypatch):
     fake_code.mkdir()
 
     monkeypatch.setattr(uninstall, "get_hermes_home", lambda: hermes_home)
-    monkeypatch.setattr(uninstall, "get_project_root", lambda: fake_code)
+    monkeypatch.setattr(uninstall, "get_hermes_source_root", lambda: fake_code)
     monkeypatch.setattr(uninstall, "uninstall_gateway_service", lambda: False)
     monkeypatch.setattr(uninstall, "remove_path_from_shell_configs", lambda: [])
     monkeypatch.setattr(uninstall, "remove_wrapper_script", lambda: [])

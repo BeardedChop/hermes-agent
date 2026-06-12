@@ -17,6 +17,7 @@ from hermes_constants import display_hermes_home
 logger = logging.getLogger(__name__)
 
 # Import from cron module (will be available when properly installed)
+# Bootstrap sys.path before imports — cannot use get_hermes_source_root() here yet.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from cron.jobs import (

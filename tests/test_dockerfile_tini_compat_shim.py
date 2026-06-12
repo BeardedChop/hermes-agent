@@ -12,7 +12,8 @@ from pathlib import Path
 
 
 def _dockerfile_text() -> str:
-    return (Path(__file__).parent.parent / "Dockerfile").read_text(encoding="utf-8")
+    from hermes_constants import get_hermes_source_root
+    return (get_hermes_source_root() / "Dockerfile").read_text(encoding="utf-8")
 
 
 def test_tini_compat_symlink_present():

@@ -3,7 +3,8 @@
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+from hermes_constants import get_hermes_source_root
+REPO_ROOT = get_hermes_source_root()
 DASHBOARD_RUN = REPO_ROOT / "docker" / "s6-rc.d" / "dashboard" / "run"
 MAIN_WRAPPER = REPO_ROOT / "docker" / "main-wrapper.sh"
 STAGE2_HOOK = REPO_ROOT / "docker" / "stage2-hook.sh"

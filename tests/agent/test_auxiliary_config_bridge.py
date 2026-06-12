@@ -203,7 +203,8 @@ class TestGatewayBridgeCodeParity:
         in source. Assert the dynamic shape and the canonical built-in keys
         bridged set instead.
         """
-        gateway_path = Path(__file__).parent.parent.parent / "gateway" / "run.py"
+        from hermes_constants import get_hermes_source_root
+        gateway_path = get_hermes_source_root() / "gateway" / "run.py"
         # Pin encoding to UTF-8: source files in this repo are UTF-8, but
         # Path.read_text() defaults to the system locale — which is cp1252
         # on most Western Windows installs and crashes as soon as the file
@@ -224,7 +225,8 @@ class TestGatewayBridgeCodeParity:
 
     def test_gateway_no_compression_env_bridge(self):
         """Gateway should NOT bridge compression config to env vars (config-only)."""
-        gateway_path = Path(__file__).parent.parent.parent / "gateway" / "run.py"
+        from hermes_constants import get_hermes_source_root
+        gateway_path = get_hermes_source_root() / "gateway" / "run.py"
         # See note in test_gateway_has_auxiliary_bridge — pin UTF-8 so the
         # test runs on Windows where the default locale is cp1252.
         content = gateway_path.read_text(encoding="utf-8")

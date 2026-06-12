@@ -151,10 +151,11 @@ def _toolset_enabled(config: Dict[str, object], toolset_key: str) -> bool:
 
 def _has_agent_browser() -> bool:
     import shutil
+    from hermes_constants import get_hermes_source_root
 
     agent_browser_bin = shutil.which("agent-browser")
     local_bin = (
-        Path(__file__).parent.parent / "node_modules" / ".bin" / "agent-browser"
+        get_hermes_source_root() / "node_modules" / ".bin" / "agent-browser"
     )
     return bool(agent_browser_bin or local_bin.exists())
 

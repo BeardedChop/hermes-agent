@@ -31,12 +31,10 @@ def test_managed_install_takes_precedence(tmp_path):
 
 
 def test_recommended_update_command_pip():
-    """Pip installs recommend pip install --upgrade."""
+    """Pip installs now redirect to the official installer."""
     from hermes_cli.config import recommended_update_command_for_method
     cmd = recommended_update_command_for_method("pip")
-    assert "pip install" in cmd or "uv pip install" in cmd
-    assert "--upgrade" in cmd
-    assert "hermes-agent" in cmd
+    assert "hermes-agent.nousresearch.com/install.sh" in cmd
 
 
 def test_stamp_file_takes_precedence(tmp_path):
@@ -103,8 +101,8 @@ def test_banner_warns_on_pip_install(tmp_path):
         )
         out = buf.getvalue()
 
-    assert "officially" in out
-    assert "instability" in out
+    assert "no longer supported" in out
+    assert "install.sh" in out
 
 
 def test_banner_no_pip_warning_on_git_install(tmp_path):

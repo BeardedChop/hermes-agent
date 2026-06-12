@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 _hermes_home = get_hermes_home()
 load_hermes_dotenv(
-    hermes_home=_hermes_home, project_env=Path(__file__).parent.parent / ".env"
+    hermes_home=_hermes_home, project_env=__import__("hermes_constants").get_hermes_source_root() / ".env"
 )
 
 

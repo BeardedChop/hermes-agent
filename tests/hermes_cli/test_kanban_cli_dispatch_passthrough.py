@@ -125,10 +125,8 @@ def test_kanban_swarm_uses_existing_humanizer_skill():
     which actually exists at skills/creative/humanizer/SKILL.md."""
     import pathlib
 
-    swarm_path = (
-        pathlib.Path(__file__).resolve().parent.parent.parent
-        / "hermes_cli" / "kanban_swarm.py"
-    )
+    from hermes_constants import get_hermes_source_root
+    swarm_path = get_hermes_source_root() / "hermes_cli" / "kanban_swarm.py"
     src = swarm_path.read_text()
     assert "avoid-ai-writing" not in src, (
         "kanban_swarm.py must not reference 'avoid-ai-writing' — that "
@@ -140,9 +138,7 @@ def test_kanban_swarm_uses_existing_humanizer_skill():
     )
 
     # And the replacement skill must actually exist on disk.
-    skills_root = (
-        pathlib.Path(__file__).resolve().parent.parent.parent / "skills"
-    )
+    skills_root = get_hermes_source_root() / "skills"
     humanizer_path = skills_root / "creative" / "humanizer" / "SKILL.md"
     assert humanizer_path.is_file(), (
         f"humanizer skill missing at {humanizer_path}; the kanban_swarm fix "

@@ -27,7 +27,8 @@ try:
 except ImportError:  # pragma: no cover — 3.10 and earlier
     import tomli as tomllib  # type: ignore
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+from hermes_constants import get_hermes_source_root
+REPO_ROOT = get_hermes_source_root()
 
 
 def _load_pyproject() -> dict:

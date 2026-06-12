@@ -3431,7 +3431,8 @@ class GatewaySlashCommandsMixin:
         if is_managed():
             return f"✗ {format_managed_message('update Hermes Agent')}"
 
-        project_root = Path(__file__).parent.parent.resolve()
+        from hermes_constants import get_hermes_source_root
+        project_root = get_hermes_source_root()
         git_dir = project_root / '.git'
 
         if not git_dir.exists():
