@@ -29,7 +29,6 @@ import { readClipboardImage, writeClipboard } from '../boundary/clipboard.ts'
 import { GatewayService, type GatewayServiceShape } from '../boundary/gateway/GatewayService.ts'
 import { liveGatewayLayer } from '../boundary/gateway/liveGateway.ts'
 import { getLog } from '../boundary/log.ts'
-import { startMemlog } from '../boundary/memlog.ts'
 import { acquireRenderer } from '../boundary/renderer.ts'
 import { makeAppLayer } from '../boundary/runtime.ts'
 import { nthAssistantResponse } from '../logic/copy.ts'
@@ -48,6 +47,7 @@ import {
 } from '../logic/slash.ts'
 import { createSessionStore, type SessionStore } from '../logic/store.ts'
 import { App } from '../view/App.tsx'
+import { TerminalChrome } from '../view/terminalChrome.tsx'
 import type { SessionPickerOps } from '../view/overlays/sessionPicker.tsx'
 import { ThemeProvider } from '../view/theme.tsx'
 import { makeFakeGatewayLayer, type FakeGatewayController } from './fakeGateway.ts'
@@ -382,10 +382,6 @@ export const run = Effect.fn('Tui.run')(function* (input: TuiInput) {
         onCtrlC,
         onCopySelection
       })
-      // Fleet memory self-sampling (HERMES_TUI_MEMLOG / diagnostics master
-      // switch — boundary/memlog.ts). Scoped acquire→release like the renderer.
-      const stopMemlog = startMemlog()
-      yield* Effect.addFinalizer(() => Effect.sync(stopMemlog))
       doQuit = () => {
         if (!renderer.isDestroyed) renderer.destroy()
       }
@@ -542,6 +538,7 @@ export const run = Effect.fn('Tui.run')(function* (input: TuiInput) {
           () => (
             <KeymapProvider keymap={keymap}>
               <ThemeProvider theme={() => store.state.theme}>
+                <TerminalChrome store={store} />
                 <App
                   store={store}
                   onSubmit={submit}
