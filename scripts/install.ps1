@@ -8,12 +8,12 @@
 #   iex (irm https://hermes-agent.nousresearch.com/install.ps1)
 #
 # Or download and run with options:
-#   .\install.ps1 -NoVenv -SkipSetup
+#   .\install.ps1 -SkipSetup
 #
 # ============================================================================
 
 param(
-    [switch]$NoVenv,
+    
     [switch]$SkipSetup,
     [string]$Branch = "main",
     # -Commit and -Tag are higher-precedence variants of -Branch for users
@@ -1360,11 +1360,6 @@ function Install-Repository {
 }
 
 function Install-Venv {
-    if ($NoVenv) {
-        Write-Info "Skipping virtual environment (-NoVenv)"
-        return
-    }
-    
     Write-Info "Creating virtual environment with Python $PythonVersion..."
     
     Push-Location $InstallDir
@@ -1398,11 +1393,9 @@ function Install-Dependencies {
     Write-Info "Installing dependencies..."
     
     Push-Location $InstallDir
-    
-    if (-not $NoVenv) {
-        # Tell uv to install into our venv (no activation needed)
-        $env:VIRTUAL_ENV = "$InstallDir\venv"
-    }
+
+    # Tell uv to install into our venv (no activation needed)
+    $env:VIRTUAL_ENV = "$InstallDir\venv"
 
     # Re-pin UV_PYTHON to the venv interpreter. Install-Venv already does this,
     # but the bootstrap runs install stages (venv, python-deps) as separate
@@ -1411,11 +1404,9 @@ function Install-Dependencies {
     # Without it, an inherited $env:UV_PYTHON = "3.14" makes the uv sync/pip
     # tiers below recreate the venv at 3.14 and fail the maturin source build
     # (no cp314 wheels yet).
-    if (-not $NoVenv) {
-        $venvPythonExe = Join-Path $InstallDir "venv\Scripts\python.exe"
-        if (Test-Path $venvPythonExe) {
-            $env:UV_PYTHON = $venvPythonExe
-        }
+    $venvPythonExe = Join-Path $InstallDir "venv\Scripts\python.exe"
+    if (Test-Path $venvPythonExe) {
+        $env:UV_PYTHON = $venvPythonExe
     }
 
     # Hash-verified install (Tier 0) -- when uv.lock is present, prefer
@@ -1482,22 +1473,22 @@ function Install-Dependencies {
 
     # Parse [project.optional-dependencies].all from pyproject.toml.
     # tomllib is stdlib on Python 3.11+ which the bootstrap guarantees.
-    $pythonExeForParse = if (-not $NoVenv) { "$InstallDir\venv\Scripts\python.exe" } else { (& $UvCmd python find $PythonVersion) }
+    $pythonExeForParse = "$InstallDir\venv\Scripts\python.exe"
     $allExtras = @()
     if (Test-Path $pythonExeForParse) {
         $parsed = & $pythonExeForParse -c @"
 import re, sys, tomllib
 try:
-    with open('pyproject.toml', 'rb') as fh:
-        data = tomllib.load(fh)
-    specs = data['project']['optional-dependencies']['all']
-    out = []
-    for s in specs:
-        m = re.search(r'hermes-agent\[([\w-]+)\]', s)
-        if m: out.append(m.group(1))
-    print(','.join(out))
+with open('pyproject.toml', 'rb') as fh:
+    data = tomllib.load(fh)
+specs = data['project']['optional-dependencies']['all']
+out = []
+for s in specs:
+    m = re.search(r'hermes-agent\[([\w-]+)\]', s)
+    if m: out.append(m.group(1))
+print(','.join(out))
 except Exception:
-    sys.exit(1)
+sys.exit(1)
 "@ 2>$null
         if ($LASTEXITCODE -eq 0 -and $parsed) {
             $allExtras = $parsed.Trim().Split(',')
@@ -1541,17 +1532,16 @@ except Exception:
     # `ModuleNotFoundError: No module named 'dotenv'` on first run).
     # We probe via the venv's own python so a misdirected sync is caught
     # here, not 30 seconds later when the user runs `hermes`.
-    if (-not $NoVenv) {
-        $venvPython = "$InstallDir\venv\Scripts\python.exe"
-        if (-not (Test-Path $venvPython)) {
-            throw "Install reported success but $venvPython does not exist. The dependency sync likely landed in a sibling .venv\ directory. Re-run the installer; if it persists, manually: cd '$InstallDir'; Remove-Item -Recurse -Force venv,.venv; uv venv venv --python $PythonVersion; `$env:UV_PROJECT_ENVIRONMENT='$InstallDir\venv'; uv sync --extra all --locked"
-        }
-        # Relax EAP=Stop while running the import probe.  Python writes
-        # deprecation warnings and import-system info to stderr; under
-        # EAP=Stop the 2>&1 merge wraps those as ErrorRecord objects and
-        # throws even when the imports succeed.  $LASTEXITCODE is the
-        # reliable signal (it's 0 iff the python invocation exited 0,
-        # regardless of what was written to stderr).
+    $venvPython = "$InstallDir\venv\Scripts\python.exe"
+    if (-not (Test-Path $venvPython)) {
+        throw "Install reported success but $venvPython does not exist. The dependency sync likely landed in a sibling .venv\ directory. Re-run the installer; if it persists, manually: cd '$InstallDir'; Remove-Item -Recurse -Force venv,.venv; uv venv venv --python $PythonVersion; `$env:UV_PROJECT_ENVIRONMENT='$InstallDir\venv'; uv sync --extra all --locked"
+    }
+    # Relax EAP=Stop while running the import probe.  Python writes
+    # deprecation warnings and import-system info to stderr; under
+    # EAP=Stop the 2>&1 merge wraps those as ErrorRecord objects and
+    # throws even when the imports succeed.  $LASTEXITCODE is the
+    # reliable signal (it's 0 iff the python invocation exited 0,
+    # regardless of what was written to stderr).
         $prevEAP = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         & $venvPython -c "import dotenv, openai, rich, prompt_toolkit" 2>&1 | Out-Null
@@ -1573,7 +1563,7 @@ except Exception:
     # users hit and lazy-import errors from `hermes dashboard` are confusing.
     # If tier 1 failed (the common case), [web] was still picked up by tiers
     # 2-3; only tier 4 leaves you without it.
-    $pythonExe = if (-not $NoVenv) { "$InstallDir\venv\Scripts\python.exe" } else { (& $UvCmd python find $PythonVersion) }
+    $pythonExe = "$InstallDir\venv\Scripts\python.exe"
     if (Test-Path $pythonExe) {
         $webOk = $false
         # Relax EAP=Stop while running the import probe; see the matching
@@ -1599,20 +1589,16 @@ except Exception:
             }
         }
     }
-    
+
     Pop-Location
-    
+
     Write-Success "All dependencies installed"
 }
 
 function Set-PathVariable {
     Write-Info "Setting up hermes command..."
     
-    if ($NoVenv) {
-        $hermesBin = "$InstallDir"
-    } else {
-        $hermesBin = "$InstallDir\venv\Scripts"
-    }
+    $hermesBin = "$InstallDir\venv\Scripts"
     
     # Add the venv Scripts dir to user PATH so hermes is globally available
     # On Windows, the hermes.exe in venv\Scripts\ has the venv Python baked in
@@ -2403,10 +2389,6 @@ function Install-PlatformSdks {
     #
     # Strategy: for each token set in .env, verify the matching SDK imports.
     # If not, run one targeted `uv pip install` as last-chance recovery.
-    if ($NoVenv) {
-        Write-Info "Skipping platform-SDK verification (-NoVenv: no venv to bootstrap)"
-        return
-    }
 
     $pythonExe = "$InstallDir\venv\Scripts\python.exe"
     if (-not (Test-Path $pythonExe)) {
@@ -2506,11 +2488,9 @@ function Invoke-SetupWizard {
     Push-Location $InstallDir
 
     # Run hermes setup using the venv Python directly (no activation needed)
-    if (-not $NoVenv) {
-        & ".\venv\Scripts\python.exe" -m hermes_cli.main setup
-    } else {
-        python -m hermes_cli.main setup
-    }
+    
+
+    & ".\venv\Scripts\python.exe" -m hermes_cli.main setup
 
     Pop-Location
 }

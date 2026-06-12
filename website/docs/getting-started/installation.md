@@ -8,8 +8,12 @@ description: "Install Hermes Agent on Linux, macOS, WSL2, native Windows, or And
 
 Get Hermes Agent up and running in under two minutes!
 
-:::info Platform Support
-Hermes Agent supports **Linux, macOS (Apple Silicon), and Windows** via first-party installers. Packaging via `pip`/PyPI and Homebrew has been **deprecated**. For full details on supported platforms and migration guides, see the [Platform Support Reference](/reference/platform-support).
+:::info Platform Support & Virtual Environments
+Hermes Agent supports **Linux, macOS (Apple Silicon), and Windows** via first-party installers. 
+
+**A virtual environment is strictly required.** Global or system-wide Python installations are not supported. Use only the official installers or Docker, or Nix.
+
+Packaging via `pip`/PyPI and Homebrew has been **deprecated**. For full details on supported platforms and migration guides, see the [Platform Support Reference](/reference/platform-support).
 :::
 
 ## Quick Install

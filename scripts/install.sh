@@ -9,7 +9,7 @@
 #   curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 #
 # Or with options:
-#   curl -fsSL ... | bash -s -- --no-venv --skip-setup
+#   curl -fsSL ... | bash -s -- --skip-setup
 #
 # ============================================================================
 
@@ -67,7 +67,6 @@ ROOT_FHS_LAYOUT=false
 DETECTED_BROWSER_EXECUTABLE=""
 
 # Options
-USE_VENV=true
 RUN_SETUP=true
 SKIP_BROWSER=false
 NO_SKILLS=false
@@ -93,10 +92,6 @@ fi
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --no-venv)
-            USE_VENV=false
-            shift
-            ;;
         --skip-setup)
             RUN_SETUP=false
             shift
@@ -160,7 +155,6 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: install.sh [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --no-venv      Don't create virtual environment"
             echo "  --skip-setup   Skip interactive setup wizard"
             echo "  --skip-browser Skip Playwright/Chromium install (browser tools won't work)"
             echo "  --no-skills    Start with a blank slate — seed no bundled skills, and"
@@ -1197,11 +1191,6 @@ clone_repo() {
 }
 
 setup_venv() {
-    if [ "$USE_VENV" = false ]; then
-        log_info "Skipping virtual environment (--no-venv)"
-        return 0
-    fi
-
     if [ "$DISTRO" = "termux" ]; then
         log_info "Creating virtual environment with Termux Python..."
 
@@ -1253,12 +1242,8 @@ install_deps() {
     fi
 
     if [ "$DISTRO" = "termux" ]; then
-        if [ "$USE_VENV" = true ]; then
-            export VIRTUAL_ENV="$INSTALL_DIR/venv"
-            PIP_PYTHON="$INSTALL_DIR/venv/bin/python"
-        else
-            PIP_PYTHON="$PYTHON_PATH"
-        fi
+        export VIRTUAL_ENV="$INSTALL_DIR/venv"
+        PIP_PYTHON="$INSTALL_DIR/venv/bin/python"
 
         if [ -z "${ANDROID_API_LEVEL:-}" ]; then
             ANDROID_API_LEVEL="$(getprop ro.build.version.sdk 2>/dev/null || true)"
@@ -1307,10 +1292,8 @@ install_deps() {
         return 0
     fi
 
-    if [ "$USE_VENV" = true ]; then
-        # Tell uv to install into our venv (no need to activate)
-        export VIRTUAL_ENV="$INSTALL_DIR/venv"
-    fi
+    # Tell uv to install into our venv (no need to activate)
+    export VIRTUAL_ENV="$INSTALL_DIR/venv"
 
     # On Debian/Ubuntu (including WSL), some Python packages need build tools.
     # Check and offer to install them if missing.
@@ -1496,15 +1479,7 @@ PY
 setup_path() {
     log_info "Setting up hermes command..."
 
-    if [ "$USE_VENV" = true ]; then
-        HERMES_BIN="$INSTALL_DIR/venv/bin/hermes"
-    else
-        HERMES_BIN="$(which hermes 2>/dev/null || echo "")"
-        if [ -z "$HERMES_BIN" ]; then
-            log_warn "hermes not found on PATH after install"
-            return 0
-        fi
-    fi
+    HERMES_BIN="$INSTALL_DIR/venv/bin/hermes"
 
     # Verify the entry point script was actually generated
     if [ ! -x "$HERMES_BIN" ]; then
@@ -1968,11 +1943,7 @@ run_setup_wizard() {
 
     # Run hermes setup using the venv Python directly (no activation needed).
     # Redirect stdin from /dev/tty so interactive prompts work when piped from curl.
-    if [ "$USE_VENV" = true ]; then
-        "$INSTALL_DIR/venv/bin/python" -m hermes_cli.main setup < /dev/tty
-    else
-        python -m hermes_cli.main setup < /dev/tty
-    fi
+    "$INSTALL_DIR/venv/bin/python" -m hermes_cli.main setup < /dev/tty
 }
 
 maybe_start_gateway() {
