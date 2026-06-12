@@ -47,6 +47,7 @@ import {
 } from '../logic/slash.ts'
 import { createSessionStore, type SessionStore } from '../logic/store.ts'
 import { App } from '../view/App.tsx'
+import { TerminalChrome } from '../view/terminalChrome.tsx'
 import type { SessionPickerOps } from '../view/overlays/sessionPicker.tsx'
 import { ThemeProvider } from '../view/theme.tsx'
 import { makeFakeGatewayLayer, type FakeGatewayController } from './fakeGateway.ts'
@@ -537,6 +538,7 @@ export const run = Effect.fn('Tui.run')(function* (input: TuiInput) {
           () => (
             <KeymapProvider keymap={keymap}>
               <ThemeProvider theme={() => store.state.theme}>
+                <TerminalChrome store={store} />
                 <App
                   store={store}
                   onSubmit={submit}
