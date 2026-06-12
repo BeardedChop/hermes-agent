@@ -8881,7 +8881,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                 )
             raise RuntimeError(
                 "Voice mode requires sounddevice and numpy.\n"
-                f"Install with: {sys.executable} -m pip install sounddevice numpy"
+                f"Install with: uv pip install sounddevice numpy"
             )
         if not reqs.get("stt_available", reqs.get("stt_key_set")):
             raise RuntimeError(
@@ -9185,7 +9185,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                     _cprint(f"  {_DIM}Then install/update the Termux:API Android app for microphone capture{_RST}")
                     _cprint(f"  {_BOLD}Option 2: pkg install python-numpy portaudio && python -m pip install sounddevice{_RST}")
                 else:
-                    _cprint(f"\n  {_BOLD}Install: {sys.executable} -m pip install {' '.join(reqs['missing_packages'])}{_RST}")
+                    _cprint(f"\n  {_BOLD}Install: uv pip install {' '.join(reqs['missing_packages'])}{_RST}")
             return
 
         with self._voice_lock:

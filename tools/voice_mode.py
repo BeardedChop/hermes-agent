@@ -672,7 +672,7 @@ class AudioRecorder:
         except (ImportError, OSError) as e:
             raise RuntimeError(
                 "Voice mode requires sounddevice and numpy.\n"
-                f"Install with: {sys.executable} -m pip install sounddevice numpy"
+                f"Install with: uv pip install sounddevice numpy"
             ) from e
 
         with self._lock:
