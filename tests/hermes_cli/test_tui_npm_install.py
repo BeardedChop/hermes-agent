@@ -14,6 +14,20 @@ def main_mod():
     return m
 
 
+@pytest.fixture(autouse=True)
+def _pin_ink_engine(monkeypatch):
+    """These tests exercise the Ink/npm bootstrap inside ``_make_tui_argv``.
+
+    The dual-engine dispatch (``_resolve_tui_engine``) auto-selects the native
+    OpenTUI engine whenever ``ui-opentui/dist`` is built in the repo, which
+    would route ``_make_tui_argv`` away from the npm path under test. Pin the
+    engine to ink, mirroring test_tui_resume_flow.py.
+    """
+    import hermes_cli.main as m
+
+    monkeypatch.setattr(m, "_resolve_tui_engine", lambda: "ink")
+
+
 def _touch_ink(root: Path) -> None:
     ink = root / "node_modules" / "@hermes" / "ink" / "package.json"
     ink.parent.mkdir(parents=True, exist_ok=True)
