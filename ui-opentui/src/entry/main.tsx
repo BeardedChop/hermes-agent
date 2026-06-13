@@ -39,6 +39,7 @@ import { createPromptHistory, dirHistoryPersister, loadDirHistory } from '../log
 import { createPasteStore } from '../logic/pastes.ts'
 import { mapResumeHistory } from '../logic/resume.ts'
 import {
+  classifySubmit,
   dispatchSlash,
   mapCompletions,
   mapModelOptions,
@@ -431,6 +432,33 @@ export const run = Effect.fn('Tui.run')(function* (input: TuiInput) {
         )
       }
 
+      // `!cmd` — run a shell command directly (Ink/free-code parity: F9). The
+      // gateway's `shell.exec` runs it (30s timeout, dangerous/hardline guards)
+      // and returns {stdout, stderr, code}; we echo the invocation as a user line
+      // and the combined output (or the error / non-zero exit) as a system line.
+      // No model turn — this never hits prompt.submit. Detached like submitPrompt.
+      const runShell = (cmd: string) => {
+        if (!cmd) return
+        store.pushUser(`!${cmd}`)
+        Effect.runFork(
+          gateway.request<{ stdout?: string; stderr?: string; code?: number }>('shell.exec', { command: cmd }).pipe(
+            Effect.tap(r =>
+              Effect.sync(() => {
+                const out = [r.stdout, r.stderr].filter(Boolean).join('\n').trimEnd()
+                if (out) store.pushSystem(out)
+                if ((r.code ?? 0) !== 0 || !out) store.pushSystem(`exit ${r.code ?? 0}`)
+              })
+            ),
+            Effect.catchCause(cause =>
+              Effect.sync(() => {
+                getLog().warn('shell', 'failed', { cause: String(cause) })
+                store.pushSystem(`error: ${String(cause)}`)
+              })
+            )
+          )
+        )
+      }
+
       // Resume a chosen session (resume picker pick or `/resume <id>` direct
       // path) — the same hydrate path as launch. When the picker was the BOOT
       // surface (bare `--resume`), no create ever ran, so the post-session
@@ -513,10 +541,13 @@ export const run = Effect.fn('Tui.run')(function* (input: TuiInput) {
         submit: submitPrompt
       }
 
-      // The composer's submit: route `/command` through the slash ladder, else a prompt.
+      // The composer's submit: `!cmd` runs a shell command (F9), `/command`
+      // routes through the slash ladder, else a prompt turn.
       const submit = (text: string) => {
-        if (text.startsWith('/')) void dispatchSlash(text, slashCtx)
-        else submitPrompt(text)
+        const route = classifySubmit(text)
+        if (route.kind === 'shell') runShell(route.payload)
+        else if (route.kind === 'slash') void dispatchSlash(route.payload, slashCtx)
+        else submitPrompt(route.payload)
       }
 
       // Live completions (items 5 + 13): a `/command [args]` line queries
@@ -525,8 +556,8 @@ export const run = Effect.fn('Tui.run')(function* (input: TuiInput) {
       // accepted item replaces from the gateway's `replace_from` (or the token
       // start), so only the relevant token is spliced — not the whole line.
       // Fired per keystroke (a debounce is a polish item).
-      const onType = (text: string) => {
-        const plan = planCompletion(text)
+      const onType = (text: string, cursor: number = text.length) => {
+        const plan = planCompletion(text, cursor)
         if (!plan) {
           store.clearCompletions()
           return

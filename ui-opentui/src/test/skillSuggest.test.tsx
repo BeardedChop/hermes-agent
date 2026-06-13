@@ -152,9 +152,9 @@ describe('anti-jank: mid-prose never completes, never autocorrects', () => {
     const h = await mountComposer()
     try {
       // learn the catalog first (a prior slash interaction), then go mid-prose
-      await h.probe.keys.typeText('/')
+      await h.probe.keys.typeText('/c')
       await h.probe.settle()
-      for (let i = 0; i < 1; i++) h.probe.keys.pressBackspace()
+      for (let i = 0; i < 2; i++) h.probe.keys.pressBackspace()
       await h.probe.settle()
       await h.probe.keys.typeText('use /comit here')
       await h.probe.settle()
@@ -218,9 +218,9 @@ describe('exact-match token highlight (native editBuffer ranges)', () => {
     const h = await mountComposer()
     try {
       // learn the catalog, then clear back to empty
-      await h.probe.keys.typeText('/')
+      await h.probe.keys.typeText('/h')
       await h.probe.settle()
-      h.probe.keys.pressBackspace()
+      for (let i = 0; i < 2; i++) h.probe.keys.pressBackspace()
       await h.probe.settle()
       await h.probe.keys.typeText('use /help here')
       await h.probe.settle()

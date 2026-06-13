@@ -244,12 +244,16 @@ describe('StatusBar frames (one left-aligned labeled line)', () => {
     expect(rows.filter(r => r.includes('│')).length).toBe(1)
   })
 
-  test('left-aligned: no right-pinned cwd — the row ends where the segments end', async () => {
-    const frame = await captureFrame(bar(seededStore()), { width: 220, height: 4 })
+  test('right-pinned cwd (F10) — the path hugs the right edge of the wide row', async () => {
+    const width = 220
+    const frame = await captureFrame(bar(seededStore()), { width, height: 4 })
     const row = frame.split('\n').find(r => r.includes('claude-opus-4-8')) ?? ''
-    // the cwd flows immediately after the mcp segment, not at the right edge:
-    // a 220-col row with a left-flowing tail has a long blank run after it.
-    expect(row.trimEnd().length).toBeLessThan(160)
+    // the cwd is pinned right: the row's content reaches near the right edge
+    // (a flex spacer eats the slack), not stopping ~mid-bar as the old
+    // left-flowing layout did. Allow a couple cells of padding/rounding.
+    expect(row.trimEnd().length).toBeGreaterThan(width - 6)
+    // and the meaningful tail (dirname + branch) sits at the very end.
+    expect(row.trimEnd().endsWith('(main)')).toBe(true)
   })
 
   test('MEDIUM (120) keeps one labeled line; the cwd tail-truncates into the leftover budget', async () => {

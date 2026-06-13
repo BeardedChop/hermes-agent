@@ -121,7 +121,7 @@ function isPrintableKey(k: {
 
 export function Composer(props: {
   onSubmit: (text: string) => void
-  onType?: ((text: string) => void) | undefined
+  onType?: ((text: string, cursor: number) => void) | undefined
   completions?: (() => CompletionItem[]) | undefined
   completionFrom?: (() => number) | undefined
   onDismiss?: (() => void) | undefined
@@ -527,7 +527,7 @@ export function Composer(props: {
             const text = ta?.plainText ?? ''
             setBufText(text) // drives the token analysis (highlight + suggestion)
             syncCursorLine()
-            props.onType?.(text)
+            props.onType?.(text, ta?.cursorOffset ?? text.length)
           }}
         />
       </box>

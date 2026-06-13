@@ -270,6 +270,11 @@ export function StatusBar(props: { store: SessionStore }) {
     }
     return len
   })
+  // The cwd is RIGHT-PINNED on its own (F10 — glitch 2026-06-13): left-aligning
+  // it with everything else forced its head to truncate (`…/hermes-agent/ui-…`)
+  // and stranded empty space at the right edge. Pinned right with a flex spacer,
+  // the dirname + branch hug the edge and only the head clips (truncLeft). Its
+  // budget is the row width minus the left run; it drops whole below CWD_MIN.
   const cwdText = createMemo(() => {
     const cwd = info().cwd
     const c = cwd ? shortCwd(cwd) : ''
@@ -337,8 +342,15 @@ export function StatusBar(props: { store: SessionStore }) {
           <Seg text={profileText()} fg={theme().color.statusFg} />
           {/* `bg: N` would slot here (segs().bg) — no store data feeds it yet (see header). */}
           <Seg text={mcpText()} />
-          <Seg text={cwdText()} />
         </text>
+        {/* the cwd is RIGHT-PINNED (F10): a flex spacer eats the slack so the
+            dirname + branch hug the right edge instead of stranding empty navy. */}
+        <Show when={cwdText()}>
+          <box style={{ flexGrow: 1 }} />
+          <text selectable={false}>
+            <span style={{ fg: theme().color.muted }}>{cwdText()}</span>
+          </text>
+        </Show>
       </Show>
     </box>
   )

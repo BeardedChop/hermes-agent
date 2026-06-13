@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test } from 'vitest'
 import type { DetailsMode } from '../logic/details.ts'
 import {
   buildModelTabs,
+  classifySubmit,
   clientCommandNames,
   dispatchSlash,
   mapCompletions,
@@ -77,7 +78,7 @@ describe('mapCompletions', () => {
 })
 
 describe('planCompletion (items 5 + 13)', () => {
-  test('a slash line → complete.slash with the full text (name AND args)', () => {
+  test('a slash command line → complete.slash with the full text (name AND args)', () => {
     expect(planCompletion('/mod')).toEqual({ from: 0, method: 'complete.slash', params: { text: '/mod' } })
     // args too — the gateway completes e.g. /details section names
     expect(planCompletion('/details thi')).toEqual({
@@ -87,28 +88,67 @@ describe('planCompletion (items 5 + 13)', () => {
     })
   })
 
-  test('a trailing path-like word → complete.path with that word + token start offset', () => {
+  test('a bare `/` does NOT open the slash menu (F1)', () => {
+    expect(planCompletion('/')).toBeNull()
+    expect(planCompletion('/ ')).toBeNull()
+  })
+
+  test('a `/abs/path` is NOT a slash command — the lead token has a `/` (F2)', () => {
+    expect(planCompletion('/usr/bin')).toBeNull()
+    expect(planCompletion('/etc/hosts and notes')).toBeNull()
+    expect(planCompletion('/./x')).toBeNull()
+  })
+
+  test('@-mention is the only path trigger (F8b) — `~`/`./`/bare paths no longer fire', () => {
     expect(planCompletion('explain @src/fo')).toEqual({
       from: 'explain '.length,
       method: 'complete.path',
       params: { word: '@src/fo' }
     })
-    expect(planCompletion('cat ./rea')).toEqual({
-      from: 'cat '.length,
-      method: 'complete.path',
-      params: { word: './rea' }
-    })
-    expect(planCompletion('open ~/proj')).toEqual({
-      from: 'open '.length,
-      method: 'complete.path',
-      params: { word: '~/proj' }
-    })
+    expect(planCompletion('@foo')).toEqual({ from: 0, method: 'complete.path', params: { word: '@foo' } })
+    // dropped triggers:
+    expect(planCompletion('cat ./rea')).toBeNull()
+    expect(planCompletion('open ~/proj')).toBeNull()
+    expect(planCompletion('see path/to/x')).toBeNull()
   })
 
-  test('plain prose / multiline → no completion', () => {
+  test('completion survives newlines, computed at the cursor (F7/F8)', () => {
+    // a `@`-mention on a later line (after Shift+Enter) still completes
+    const text = 'first line\nexplain @src/fo'
+    expect(planCompletion(text, text.length)).toEqual({
+      from: 'first line\nexplain '.length,
+      method: 'complete.path',
+      params: { word: '@src/fo' }
+    })
+    // mid-buffer: cursor inside the @token on line 2
+    const t2 = 'see @foo\nmore'
+    expect(planCompletion(t2, 8)).toEqual({ from: 4, method: 'complete.path', params: { word: '@foo' } })
+  })
+
+  test('a `/` after a newline is prose, never a slash command', () => {
+    expect(planCompletion('/cmd with\nnewline')).toBeNull()
+  })
+
+  test('plain prose → no completion', () => {
     expect(planCompletion('just some words')).toBeNull()
     expect(planCompletion('hello')).toBeNull()
-    expect(planCompletion('/cmd with\nnewline')).toBeNull()
+  })
+})
+
+describe('classifySubmit (F9 routing)', () => {
+  test('a `!cmd` line routes to shell with the bang stripped + trimmed', () => {
+    expect(classifySubmit('!ls -la')).toEqual({ kind: 'shell', payload: 'ls -la' })
+    expect(classifySubmit('!  git status  ')).toEqual({ kind: 'shell', payload: 'git status' })
+    expect(classifySubmit('!')).toEqual({ kind: 'shell', payload: '' })
+  })
+
+  test('a `/command` line routes to slash with the full text', () => {
+    expect(classifySubmit('/model opus')).toEqual({ kind: 'slash', payload: '/model opus' })
+  })
+
+  test('everything else is a prompt turn', () => {
+    expect(classifySubmit('hello world')).toEqual({ kind: 'prompt', payload: 'hello world' })
+    expect(classifySubmit('explain @src/x')).toEqual({ kind: 'prompt', payload: 'explain @src/x' })
   })
 })
 

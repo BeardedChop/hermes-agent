@@ -32,6 +32,21 @@ export function parseSlash(input: string): ParsedSlash | null {
   return sp === -1 ? { arg: '', name: body } : { arg: body.slice(sp + 1).trim(), name: body.slice(0, sp) }
 }
 
+/** How a submitted composer line is routed (F9 + slash ladder): a `!cmd` runs a
+ *  shell command, a `/command` goes through the slash dispatcher, everything else
+ *  is a prompt turn. `payload` is the command (shell) with the lead `!` stripped
+ *  and trimmed, or the original text (slash/prompt). */
+export type SubmitRoute =
+  | { kind: 'shell'; payload: string }
+  | { kind: 'slash'; payload: string }
+  | { kind: 'prompt'; payload: string }
+
+export function classifySubmit(text: string): SubmitRoute {
+  if (text.startsWith('!')) return { kind: 'shell', payload: text.slice(1).trim() }
+  if (text.startsWith('/')) return { kind: 'slash', payload: text }
+  return { kind: 'prompt', payload: text }
+}
+
 /** The host capabilities the dispatcher needs (wired by the entry boundary). */
 export interface SlashContext {
   /** Server RPC (resolves with the result, rejects on GatewayError). */
@@ -89,33 +104,55 @@ export interface CompletionPlan {
   from: number
 }
 
-/** A path-like last token worth file/@-mention completion (mirrors Ink's TAB_PATH_RE intent). */
+/** The command-name grammar for the lead `/token` (mirrors skillMatch NAME_RE):
+ *  starts alphanumeric, then word chars / `.` / `-`. Notably EXCLUDES `/`, so a
+ *  path like `/usr/bin` is NEVER a slash command (F2). */
+const SLASH_NAME_RE = /^[A-Za-z0-9][\w.-]*$/
+
+/** `@`-mention is the ONLY file/dir completion trigger now (F8b — glitch
+ *  2026-06-13: drop `~`/`./`/`/`/bare-path as triggers; the gateway's
+ *  complete.path still understands `@file:`/`@folder:`/fuzzy basename). */
 function isPathLike(word: string): boolean {
-  return (
-    word.startsWith('@') ||
-    word.startsWith('~') ||
-    word.startsWith('./') ||
-    word.startsWith('../') ||
-    word.startsWith('/') ||
-    word.includes('/')
-  )
+  return word.startsWith('@')
 }
 
 /**
- * Decide what to complete for the current composer text (cursor assumed at end):
- *   - `/command [args]` → `complete.slash {text}` (the gateway completes names AND
- *     args, e.g. /details section names),
- *   - a trailing path-like word (`@…`, `~/…`, `./…`, `/…`, or anything with `/`) →
- *     `complete.path {word}` for file/dir tagging,
+ * Decide what to complete for the composer text + cursor offset:
+ *   - the text is a slash command — `/` at the very start followed by at least
+ *     one command-name char (`/m`, `/model foo`) → `complete.slash {text}`. A
+ *     bare `/` (F1) or a `/abs/path` whose first token isn't a valid name (F2) →
+ *     no slash menu.
+ *   - the WORD under the cursor is an `@`-mention → `complete.path {word}` for
+ *     file/dir tagging (F8b).
  *   - otherwise nothing.
+ *
+ * Cursor-aware (F7/F8): completion is computed from the line/token at the cursor,
+ * so it keeps working on later lines after Shift+Enter (the old whole-buffer
+ * `includes('\n')` bail killed it on every multi-line buffer). `cursor` defaults
+ * to the end of `text`. Slash commands stay first-line-only (a `/` mid-buffer is
+ * prose, never a command).
  * Returns null when there's no completion to run (so the dropdown clears).
  */
-export function planCompletion(text: string): CompletionPlan | null {
-  if (text.includes('\n')) return null
-  if (text.startsWith('/')) return { from: 0, method: 'complete.slash', params: { text } }
-  const word = /(\S+)$/.exec(text)?.[1]
-  if (word && isPathLike(word)) {
-    return { from: text.length - word.length, method: 'complete.path', params: { word } }
+export function planCompletion(text: string, cursor: number = text.length): CompletionPlan | null {
+  // Slash command: only when the WHOLE buffer's lead token is a command. A `/`
+  // after a newline is prose, so a slash command never spans lines.
+  if (text.startsWith('/') && !text.includes('\n')) {
+    const body = text.slice(1)
+    const space = body.search(/\s/)
+    const name = space === -1 ? body : body.slice(0, space)
+    if (SLASH_NAME_RE.test(name)) {
+      return { from: 0, method: 'complete.slash', params: { text } }
+    }
+    return null
+  }
+  // @-mention: the whitespace-delimited token the cursor sits in/just after.
+  const pos = Math.max(0, Math.min(cursor, text.length))
+  const head = text.slice(0, pos)
+  const tokenStart = head.search(/\S+$/)
+  if (tokenStart === -1) return null
+  const word = head.slice(tokenStart)
+  if (isPathLike(word)) {
+    return { from: tokenStart, method: 'complete.path', params: { word } }
   }
   return null
 }

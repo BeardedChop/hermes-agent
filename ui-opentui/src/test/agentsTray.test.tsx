@@ -175,7 +175,7 @@ describe('agents tray — Down-arrow focus routing', () => {
     try {
       spawn(h.store, 'a1', 'research X')
       await h.probe.waitForFrame(f => f.includes(INDICATOR))
-      await h.probe.keys.typeText('/')
+      await h.probe.keys.typeText('/c')
       await h.probe.settle()
       await h.probe.waitForFrame(f => f.includes('/copy'))
       h.probe.keys.pressArrow('down') // menu: /clear → /copy (NOT the tray)

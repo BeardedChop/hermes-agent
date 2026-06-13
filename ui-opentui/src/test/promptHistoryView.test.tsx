@@ -140,7 +140,7 @@ describe('Esc+Esc — opening the viewer', () => {
   test('an Esc that dismissed the completion dropdown does NOT arm the double-press', async () => {
     const h = await mount(['a prompt'])
     try {
-      await h.probe.keys.typeText('/')
+      await h.probe.keys.typeText('/c')
       await h.probe.settle()
       await h.probe.waitForFrame(f => f.includes('/clear')) // dropdown open
       h.probe.keys.pressEscape() // consumed: dismisses the dropdown

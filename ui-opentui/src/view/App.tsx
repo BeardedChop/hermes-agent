@@ -40,7 +40,7 @@ import { Transcript } from './transcript.tsx'
 export interface AppProps {
   readonly store: SessionStore
   readonly onSubmit?: (text: string) => void
-  readonly onType?: (text: string) => void
+  readonly onType?: (text: string, cursor: number) => void
   readonly onRespond?: (method: string, params: Record<string, unknown>) => void
   readonly onResume?: (sessionId: string) => void
   /** Gateway calls for the resume picker (session.list/peek/title). */

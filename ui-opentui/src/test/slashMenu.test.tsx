@@ -129,16 +129,29 @@ async function mountComposer(historyEntries: string[] = []): Promise<Harness> {
   return { probe, submitted, typed }
 }
 
-describe('slash menu — typing `/` opens the catalog dropdown', () => {
-  test('`/` as the first char shows the candidates + the nav hint', async () => {
+describe('slash menu — opens only after a name char (F1)', () => {
+  test('a bare `/` does NOT open the menu (F1 — type a char first)', async () => {
     const h = await mountComposer()
     try {
       await h.probe.keys.typeText('/')
       await h.probe.settle()
+      const frame = h.probe.frame()
+      expect(frame).not.toContain('/clear')
+      expect(frame).not.toContain('Esc dismiss')
+      expect(frame).toContain('/') // the slash stays in the composer
+    } finally {
+      h.probe.destroy()
+    }
+  })
+
+  test('`/c` shows the matching candidates + the nav hint', async () => {
+    const h = await mountComposer()
+    try {
+      await h.probe.keys.typeText('/c')
+      await h.probe.settle()
       const frame = await h.probe.waitForFrame(f => f.includes('/clear'))
       expect(frame).toContain('/copy')
-      expect(frame).toContain('/help')
-      expect(frame).toContain('/model')
+      expect(frame).not.toContain('/help') // filtered out by the `/c` prefix
       expect(frame).toContain('↑/↓ select')
     } finally {
       h.probe.destroy()
@@ -164,16 +177,16 @@ describe('slash menu — arrow navigation + Enter accept', () => {
   test('ArrowDown moves the selection; Enter accepts the highlighted command (no submit)', async () => {
     const h = await mountComposer()
     try {
-      await h.probe.keys.typeText('/')
+      await h.probe.keys.typeText('/c') // → /clear, /copy
       await h.probe.settle()
-      await h.probe.waitForFrame(f => f.includes('/model'))
+      await h.probe.waitForFrame(f => f.includes('/copy'))
       h.probe.keys.pressArrow('down') // /clear → /copy
       await h.probe.settle()
       h.probe.keys.pressEnter()
       await h.probe.settle()
       const frame = h.probe.frame()
       expect(frame).toContain('/copy') // spliced into the composer …
-      expect(frame).not.toContain('/clear') // … and the menu is gone
+      expect(frame).not.toContain('Esc dismiss') // … and the menu is gone
       expect(h.submitted).toEqual([]) // Enter ACCEPTED, did not submit
       expect(h.typed.at(-1)).toBe('/copy ') // trailing space → arg-completion re-query ran
     } finally {
@@ -184,16 +197,15 @@ describe('slash menu — arrow navigation + Enter accept', () => {
   test('ArrowUp from the top wraps to the LAST candidate', async () => {
     const h = await mountComposer()
     try {
-      await h.probe.keys.typeText('/')
+      await h.probe.keys.typeText('/c') // → /clear, /copy
       await h.probe.settle()
-      await h.probe.waitForFrame(f => f.includes('/model'))
-      h.probe.keys.pressArrow('up') // wraps 0 → 3 (/model)
+      await h.probe.waitForFrame(f => f.includes('/copy'))
+      h.probe.keys.pressArrow('up') // wraps 0 → 1 (/copy)
       await h.probe.settle()
       h.probe.keys.pressEnter()
       await h.probe.settle()
-      expect(h.probe.frame()).toContain('/model')
+      expect(h.typed.at(-1)).toBe('/copy ')
       expect(h.submitted).toEqual([])
-      expect(h.typed.at(-1)).toBe('/model ')
     } finally {
       h.probe.destroy()
     }
@@ -202,10 +214,10 @@ describe('slash menu — arrow navigation + Enter accept', () => {
   test('ArrowDown past the bottom wraps to the FIRST candidate', async () => {
     const h = await mountComposer()
     try {
-      await h.probe.keys.typeText('/')
+      await h.probe.keys.typeText('/c') // → /clear, /copy
       await h.probe.settle()
-      await h.probe.waitForFrame(f => f.includes('/model'))
-      for (let i = 0; i < 4; i++) h.probe.keys.pressArrow('down') // 0→1→2→3→0
+      await h.probe.waitForFrame(f => f.includes('/copy'))
+      for (let i = 0; i < 2; i++) h.probe.keys.pressArrow('down') // 0→1→0
       await h.probe.settle()
       h.probe.keys.pressEnter()
       await h.probe.settle()
@@ -277,10 +289,10 @@ describe('slash menu — Esc / Tab / no-dropdown routing', () => {
   test('arrows while the slash menu is open do NOT touch prompt history', async () => {
     const h = await mountComposer(['older prompt'])
     try {
-      await h.probe.keys.typeText('/')
+      await h.probe.keys.typeText('/c')
       await h.probe.settle()
-      await h.probe.waitForFrame(f => f.includes('/model'))
-      h.probe.keys.pressArrow('up') // menu nav (wraps to /model), NOT history
+      await h.probe.waitForFrame(f => f.includes('/copy'))
+      h.probe.keys.pressArrow('up') // menu nav (wraps), NOT history
       await h.probe.settle()
       expect(h.probe.frame()).not.toContain('older prompt')
     } finally {
