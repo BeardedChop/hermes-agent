@@ -20,6 +20,7 @@ import { useRenderer } from '@opentui/solid'
 import { createEffect, on } from 'solid-js'
 
 import { installTerminalChrome, type TerminalChromeSeam } from '../boundary/termChrome.ts'
+import { notificationChannels } from '../logic/notificationDispatcher.ts'
 import type { createSessionStore } from '../logic/store.ts'
 import { promptNotification, TURN_COMPLETE_NOTIFICATION } from '../logic/termChrome.ts'
 
@@ -52,6 +53,21 @@ export function TerminalChrome(props: { store: Store; chrome?: TerminalChromeSea
       () => props.store.state.info.running,
       (running, previous) => {
         if (previous === true && running === false) chrome.notify(TURN_COMPLETE_NOTIFICATION)
+      },
+      { defer: true }
+    )
+  )
+
+  // Background-activity notification → desktop OSC ping for the "important" ones
+  // (errors/warnings/completions); the inline card already covers in-transcript.
+  // The seam's own focus gate suppresses it when the terminal is focused.
+  createEffect(
+    on(
+      () => props.store.state.lastNotification,
+      n => {
+        if (!n) return
+        const osc = notificationChannels(n).osc
+        if (osc) chrome.notify(osc)
       },
       { defer: true }
     )

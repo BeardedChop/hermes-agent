@@ -1,0 +1,62 @@
+/**
+ * Background-activity notifications (P1) — the inline card + store wiring.
+ *   1. store: notification.show → a distinct `notification` message + lastNotification;
+ *      notification.clear {key} drops the matching card; bad payloads are ignored.
+ *   2. frame: NotificationCard renders the `◆` marker + kind + text (distinct chrome).
+ */
+import { describe, expect, test } from 'vitest'
+
+import { createSessionStore } from '../logic/store.ts'
+import { NotificationCard } from '../view/notificationCard.tsx'
+import { ThemeProvider } from '../view/theme.tsx'
+import { captureFrame } from './lib/render.ts'
+
+describe('notification store wiring', () => {
+  test('notification.show pushes a distinct notification card + records lastNotification', () => {
+    const store = createSessionStore()
+    store.apply({ type: 'gateway.ready' })
+    store.apply({
+      type: 'notification.show',
+      payload: { text: 'dev server ready on :3000', level: 'info', kind: 'process.complete', key: 'p1', id: 'n1' }
+    })
+    const last = store.state.messages.at(-1)
+    expect(last?.role).toBe('notification')
+    expect(last?.notification?.text).toBe('dev server ready on :3000')
+    expect(last?.notification?.kind).toBe('process.complete')
+    expect(store.state.lastNotification?.id).toBe('n1')
+  })
+
+  test('notification.clear {key} drops only the matching card', () => {
+    const store = createSessionStore()
+    store.apply({ type: 'gateway.ready' })
+    store.apply({ type: 'notification.show', payload: { text: 'a', key: 'k1', id: 'n1' } })
+    store.apply({ type: 'notification.show', payload: { text: 'b', key: 'k2', id: 'n2' } })
+    store.apply({ type: 'notification.clear', payload: { key: 'k1' } })
+    const notifs = store.state.messages.filter(m => m.role === 'notification')
+    expect(notifs).toHaveLength(1)
+    expect(notifs[0]?.notification?.key).toBe('k2')
+  })
+
+  test('a notification with no text is ignored (no empty card)', () => {
+    const store = createSessionStore()
+    store.apply({ type: 'gateway.ready' })
+    store.apply({ type: 'notification.show', payload: { level: 'warn', kind: 'x' } })
+    expect(store.state.messages.some(m => m.role === 'notification')).toBe(false)
+  })
+})
+
+describe('NotificationCard frame', () => {
+  test('renders the ◆ marker, the kind label, and the text', async () => {
+    const frame = await captureFrame(
+      () => (
+        <ThemeProvider theme={() => createSessionStore().state.theme}>
+          <NotificationCard notification={{ id: 'n1', text: 'build finished', level: 'info', kind: 'task.done' }} />
+        </ThemeProvider>
+      ),
+      { width: 60, height: 4 }
+    )
+    expect(frame).toContain('◆')
+    expect(frame).toContain('task.done')
+    expect(frame).toContain('build finished')
+  })
+})

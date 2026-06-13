@@ -26,6 +26,7 @@ import { diffStats, type DiffStats } from './diff.ts'
 import type { SessionTabId } from './sessionPicker.ts'
 import { envFlag, envOutputUnlimited } from './env.ts'
 import { registerNotifier } from './notify.ts'
+import { parseNotification, type ActivityNotification } from './backgroundActivity.ts'
 import { stripAnsi, stripOmittedNote, stripToolEnvelope } from './toolOutput.ts'
 import { DEFAULT_THEME, type Theme, themeFromSkin } from './theme.ts'
 
@@ -74,12 +75,15 @@ export type Part =
   | ToolPartState
 
 export interface Message {
-  readonly role: 'user' | 'assistant' | 'system'
+  readonly role: 'user' | 'assistant' | 'system' | 'notification'
   /** Flat body for user/system rows (and settled/resumed assistant rows). */
   text: string
   /** Ordered parts for a live assistant turn; absent for user/system. */
   parts?: Part[]
   streaming?: boolean
+  /** Background-activity card payload (role `'notification'` only) — rendered as
+   *  an inline NotificationCard instead of a normal role row. */
+  notification?: ActivityNotification
 }
 
 /**
@@ -249,6 +253,10 @@ export interface StoreState {
   /** Transient busy indicator (the kaomoji face/verb from `thinking.delta`/`status.update`);
    *  shown above the composer WHILE a turn runs, cleared on `message.complete`. NOT transcript. */
   status: string | undefined
+  /** Most recent background-activity notification (`notification.show`) — the OSC
+   *  seam (terminalChrome) watches this to fire a desktop ping; the inline card
+   *  lives in `messages`. Undefined until the first notification. */
+  lastNotification: ActivityNotification | undefined
   /** Live session chrome for the status bar (model/effort/cwd/branch/context/running). */
   info: SessionInfo
   /** Transient hint shown above the composer (e.g. "Ctrl+C again to quit" — item 11);
@@ -453,6 +461,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
     subagents: [],
     dashboard: false,
     dashboardAgent: undefined,
+    lastNotification: undefined,
     status: undefined,
     // startedAt is set ONCE here (store creation ≈ session start) — the status
     // bar's session-duration segment ticks from it; wire patches never carry it.
@@ -573,6 +582,31 @@ export function createSessionStore(options?: SessionStoreOptions) {
         draft.messages.push({ role: 'system', text: clean })
         capMessages(draft)
       })
+    )
+  }
+
+  /** Push a background-activity notification as a distinct inline card (role
+   *  `'notification'`) and record it as `lastNotification` for the OSC seam.
+   *  NOT a plain system line — the card renders level-tinted, clearly chrome. */
+  function pushNotification(n: ActivityNotification) {
+    // Store INDEPENDENT clones in the message vs lastNotification: createStore
+    // wraps a shared object reference into one node, which would alias every
+    // card to the most-recent notification (the message text stays right, but the
+    // nested payload bleeds). Distinct copies keep each card's payload its own.
+    setState(
+      produce(draft => {
+        draft.messages.push({ role: 'notification', text: n.text, notification: { ...n } })
+        capMessages(draft)
+      })
+    )
+    setState('lastNotification', { ...n })
+  }
+
+  /** Drop the inline cards for a cleared notification key (`notification.clear`). */
+  function clearNotificationCards(key: string) {
+    setState(
+      'messages',
+      state.messages.filter(m => !(m.role === 'notification' && m.notification?.key === key))
     )
   }
 
@@ -752,6 +786,19 @@ export function createSessionStore(options?: SessionStoreOptions) {
       case 'status.update': {
         const text = event.payload?.text ?? ''
         if (text) setState('status', text)
+        break
+      }
+      // notification.show — background-activity notice (process/run state change,
+      // credits, etc.). Renders as a distinct inline card (NOT a plain line) and
+      // records lastNotification so the OSC seam can ping a blurred terminal.
+      case 'notification.show': {
+        const n = parseNotification(event.payload)
+        if (n) pushNotification(n)
+        break
+      }
+      case 'notification.clear': {
+        const key = event.payload?.key
+        if (key) clearNotificationCards(key)
         break
       }
       // reasoning.delta is the model's actual reasoning — a (dim) transcript part.
@@ -1045,6 +1092,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
     apply,
     pushUser,
     pushSystem,
+    pushNotification,
     setCatalog,
     setSessionId,
     clearTranscript,

@@ -1,0 +1,161 @@
+/**
+ * Background-activity logic tests — pure parsers + derive helpers. Everything
+ * off the wire is `unknown`, so the parsers must defend against garbage/missing
+ * fields and map snake_case → camelCase.
+ */
+import { describe, expect, test } from 'vitest'
+
+import {
+  type ActivityNotification,
+  type BackgroundProcess,
+  type BackgroundRun,
+  clearNotificationsByKey,
+  parseNotification,
+  parseProcessList,
+  runningCount,
+  upsertNotification
+} from '../logic/backgroundActivity.ts'
+
+describe('parseNotification', () => {
+  test('happy path: full payload, snake_case ttl_ms → ttlMs', () => {
+    expect(
+      parseNotification({ id: 'job-1', key: 'k1', kind: 'task.complete', level: 'warn', text: 'done', ttl_ms: 5000 })
+    ).toEqual({ id: 'job-1', key: 'k1', kind: 'task.complete', level: 'warn', text: 'done', ttlMs: 5000 })
+  })
+
+  test('garbage / missing level coerces to info; missing kind → ""', () => {
+    expect(parseNotification({ id: 'a', level: 'screaming', text: 'hi' })).toEqual({
+      id: 'a',
+      kind: '',
+      level: 'info',
+      text: 'hi'
+    })
+    expect(parseNotification({ id: 'b', text: 'no level' })?.level).toBe('info')
+  })
+
+  test('missing/empty text → null (text is load-bearing for the card)', () => {
+    expect(parseNotification({ id: 'a', level: 'info' })).toBeNull()
+    expect(parseNotification({ id: 'a', text: '' })).toBeNull()
+    expect(parseNotification(null)).toBeNull()
+    expect(parseNotification('nope')).toBeNull()
+  })
+
+  test('id falls back to key when id is absent', () => {
+    const n = parseNotification({ key: 'k-only', text: 'hello' })
+    expect(n?.id).toBe('k-only')
+    expect(n?.key).toBe('k-only')
+  })
+
+  test('no id and no key → synthesized id `n:${text}` so dedupe still works', () => {
+    const n = parseNotification({ text: 'build finished' })
+    expect(n?.id).toBe('n:build finished')
+    expect(n?.key).toBeUndefined()
+    // two re-emits of the same text dedupe to one row
+    const list = upsertNotification(upsertNotification([], n!), parseNotification({ text: 'build finished' })!)
+    expect(list).toHaveLength(1)
+  })
+
+  test('id is preferred over key when both present', () => {
+    expect(parseNotification({ id: 'real', key: 'k', text: 'x' })?.id).toBe('real')
+  })
+
+  test('non-number ttl_ms is dropped (no ttlMs)', () => {
+    const n = parseNotification({ id: 'a', text: 'x', ttl_ms: 'soon' })
+    expect(n?.ttlMs).toBeUndefined()
+  })
+})
+
+describe('upsertNotification', () => {
+  const base: ActivityNotification = { id: 'a', kind: '', level: 'info', text: 'first' }
+
+  test('appends a new id, returns a NEW array', () => {
+    const list: readonly ActivityNotification[] = [base]
+    const next = upsertNotification(list, { id: 'b', kind: '', level: 'info', text: 'second' })
+    expect(next).toHaveLength(2)
+    expect(next).not.toBe(list)
+    expect(list).toHaveLength(1) // input untouched
+  })
+
+  test('replaces an existing id in place (dedupe)', () => {
+    const list: ActivityNotification[] = [base, { id: 'b', kind: '', level: 'info', text: 'second' }]
+    const next = upsertNotification(list, { id: 'a', kind: 'x', level: 'error', text: 'updated' })
+    expect(next).toHaveLength(2)
+    expect(next[0]).toEqual({ id: 'a', kind: 'x', level: 'error', text: 'updated' })
+    expect(next[1]!.id).toBe('b')
+  })
+})
+
+describe('clearNotificationsByKey', () => {
+  test('removes all with the matching key; keeps others and keyless rows', () => {
+    const list: ActivityNotification[] = [
+      { id: '1', key: 'k', kind: '', level: 'info', text: 'a' },
+      { id: '2', key: 'other', kind: '', level: 'info', text: 'b' },
+      { id: '3', kind: '', level: 'info', text: 'c' },
+      { id: '4', key: 'k', kind: '', level: 'info', text: 'd' }
+    ]
+    const next = clearNotificationsByKey(list, 'k')
+    expect(next.map(n => n.id)).toEqual(['2', '3'])
+    expect(next).not.toBe(list)
+  })
+})
+
+describe('parseProcessList', () => {
+  test('maps good rows, snake_case → camelCase', () => {
+    expect(
+      parseProcessList({
+        processes: [
+          { command: 'npm test', session_id: 's1', status: 'running', uptime_seconds: 12 },
+          { command: 'build', session_id: 's2', status: 'exited', uptime_seconds: 99 }
+        ]
+      })
+    ).toEqual([
+      { command: 'npm test', sessionId: 's1', status: 'running', uptimeSeconds: 12 },
+      { command: 'build', sessionId: 's2', status: 'exited', uptimeSeconds: 99 }
+    ])
+  })
+
+  test('skips malformed rows (missing session_id or command); defaults status/uptime', () => {
+    expect(
+      parseProcessList({
+        processes: [
+          { command: 'ok', session_id: 's1' }, // no status/uptime → defaults
+          { command: 'no-session' }, // dropped
+          { session_id: 's3' }, // dropped
+          null, // dropped
+          'garbage' // dropped
+        ]
+      })
+    ).toEqual([{ command: 'ok', sessionId: 's1', status: '', uptimeSeconds: 0 }])
+  })
+
+  test('non-object / missing processes → []', () => {
+    expect(parseProcessList(null)).toEqual([])
+    expect(parseProcessList({})).toEqual([])
+    expect(parseProcessList({ processes: 'nope' })).toEqual([])
+  })
+})
+
+describe('runningCount', () => {
+  const runs: BackgroundRun[] = [
+    { id: 'r1', label: 'A', status: 'running' },
+    { id: 'r2', label: 'B', status: 'complete' },
+    { id: 'r3', label: 'C', status: 'running' },
+    { id: 'r4', label: 'D', status: 'failed' }
+  ]
+  const procs: BackgroundProcess[] = [
+    { command: 'a', sessionId: 's1', status: 'running', uptimeSeconds: 1 },
+    { command: 'b', sessionId: 's2', status: 'exited', uptimeSeconds: 1 },
+    { command: 'c', sessionId: 's3', status: 'Sleeping', uptimeSeconds: 1 }, // unknown → running (lenient)
+    { command: 'd', sessionId: 's4', status: 'DONE', uptimeSeconds: 1 }, // case-insensitive terminal
+    { command: 'e', sessionId: 's5', status: 'killed', uptimeSeconds: 1 }
+  ]
+
+  test('counts running runs + running-ish processes (lenient on unknown statuses)', () => {
+    // runs: r1, r3 = 2; procs: running + Sleeping = 2 (exited/DONE/killed excluded)
+    expect(runningCount(runs, procs)).toBe(4)
+  })
+
+  test('empty inputs → 0', () => {
+    expect(runningCount([], [])).toBe(0)
+  })
+})
