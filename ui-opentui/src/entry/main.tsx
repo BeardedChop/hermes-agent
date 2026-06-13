@@ -538,6 +538,7 @@ export const run = Effect.fn('Tui.run')(function* (input: TuiInput) {
             .map(e => `${e.scope}: ${e.msg}`),
         openDashboard: () => store.openDashboard(),
         openBackgroundPanel: () => store.openBackgroundPanel(),
+        addBgTask: id => store.addBgTask(id),
         openPager: (title, text) => store.openPager(title, text),
         openPicker: picker => store.openPicker(picker),
         openSessionPicker: tab => store.openSessionPicker(tab),
@@ -594,26 +595,9 @@ export const run = Effect.fn('Tui.run')(function* (input: TuiInput) {
       // Live backend: drive a session (create + optional initial prompt) concurrently.
       if (!input.fake) yield* Effect.forkScoped(bootstrapSession(gateway, store, input))
 
-      // Ambient `bg:` badge (A): poll the OS-process registry so the status bar
-      // reflects running background processes even with the panel closed. Cheap
-      // local RPC; scoped fiber → auto-cancelled on shutdown. Adaptive interval:
-      // most sessions have ZERO background processes, so idle-poll slowly (30s)
-      // and tighten to 8s only once something is running.
-      if (!input.fake)
-        yield* Effect.forkScoped(
-          Effect.gen(function* () {
-            while (true) {
-              const idle = store.state.backgroundProcesses.length === 0
-              yield* Effect.sleep(idle ? '30 seconds' : '8 seconds')
-              yield* Effect.promise(() =>
-                backgroundOps
-                  .list()
-                  .then(procs => store.setBackgroundProcesses(procs))
-                  .catch(() => {})
-              )
-            }
-          })
-        )
+      // (No ambient OS-process poll: the `bg:` badge now counts in-flight
+      // background-PROMPT tasks from the event stream, and the /processes panel
+      // fetches `agents.list` on open. Nothing to poll for.)
 
       // Contact point #1: the single render bridge. After this, the screen is Solid's.
       // The theme is sourced reactively from the store (skin events update it).

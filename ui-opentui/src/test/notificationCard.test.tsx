@@ -43,6 +43,19 @@ describe('notification store wiring', () => {
     store.apply({ type: 'notification.show', payload: { level: 'warn', kind: 'x' } })
     expect(store.state.messages.some(m => m.role === 'notification')).toBe(false)
   })
+
+  test('background.complete → a completion card + drops the bg task from the badge count', () => {
+    const store = createSessionStore()
+    store.apply({ type: 'gateway.ready' })
+    store.addBgTask('bg_abc')
+    expect(store.state.bgTasks).toEqual(['bg_abc'])
+    store.apply({ type: 'background.complete', payload: { task_id: 'bg_abc', text: 'all done' } })
+    expect(store.state.bgTasks).toEqual([]) // untracked → bg: badge decrements
+    const last = store.state.messages.at(-1)
+    expect(last?.role).toBe('notification')
+    expect(last?.notification?.text).toContain('bg_abc')
+    expect(last?.notification?.text).toContain('all done')
+  })
 })
 
 describe('NotificationCard frame', () => {

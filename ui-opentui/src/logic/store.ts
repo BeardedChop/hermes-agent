@@ -257,10 +257,13 @@ export interface StoreState {
   dashboard: boolean
   /** Subagent id the dashboard should preselect on open (tray Enter — Epic 2.7). */
   dashboardAgent: string | undefined
-  /** Whether the background-process panel overlay is open (/bg). */
+  /** Whether the OS background-process panel overlay is open (/processes). */
   backgroundPanel: boolean
-  /** OS background processes (polled from `agents.list`) — the panel + the `bg:` badge. */
+  /** OS background processes (from `agents.list`) — shown in the /processes panel. */
   backgroundProcesses: BackgroundProcess[]
+  /** In-flight background-PROMPT task ids (`/bg` → `prompt.background`, cleared on
+   *  `background.complete`) — drives the `bg: N` status-bar badge. */
+  bgTasks: string[]
   /** Transient busy indicator (the kaomoji face/verb from `thinking.delta`/`status.update`);
    *  shown above the composer WHILE a turn runs, cleared on `message.complete`. NOT transcript. */
   status: string | undefined
@@ -474,6 +477,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
     dashboardAgent: undefined,
     backgroundPanel: false,
     backgroundProcesses: [],
+    bgTasks: [],
     lastNotification: undefined,
     status: undefined,
     // startedAt is set ONCE here (store creation ≈ session start) — the status
@@ -649,9 +653,19 @@ export function createSessionStore(options?: SessionStoreOptions) {
   function closeBackgroundPanel() {
     setState('backgroundPanel', false)
   }
-  /** Replace the polled OS-process snapshot (drives the panel + the `bg:` badge). */
+  /** Replace the OS-process snapshot (drives the /processes panel). */
   function setBackgroundProcesses(procs: BackgroundProcess[]) {
     setState('backgroundProcesses', procs)
+  }
+  /** Track an in-flight background-prompt task (`/bg` start) — drives the `bg:` badge. */
+  function addBgTask(id: string) {
+    if (!state.bgTasks.includes(id)) setState('bgTasks', [...state.bgTasks, id])
+  }
+  function removeBgTask(id: string) {
+    setState(
+      'bgTasks',
+      state.bgTasks.filter(t => t !== id)
+    )
   }
 
   /** Open a local Y/N confirm dialog (non-gateway; e.g. /clear). */
@@ -823,6 +837,19 @@ export function createSessionStore(options?: SessionStoreOptions) {
       case 'notification.clear': {
         const key = event.payload?.key
         if (key) clearNotificationCards(key)
+        break
+      }
+      // A background PROMPT (`/bg`) finished: drop it from the in-flight set (the
+      // `bg:` badge) and surface its result as a distinct inline completion card
+      // (a completion-ish kind → also fires the OSC desktop ping).
+      case 'background.complete': {
+        removeBgTask(event.payload.task_id)
+        pushNotification({
+          id: `bg:${event.payload.task_id}`,
+          kind: 'background task complete',
+          level: 'info',
+          text: `bg ${event.payload.task_id} → ${event.payload.text}`
+        })
         break
       }
       // reasoning.delta is the model's actual reasoning — a (dim) transcript part.
@@ -1142,6 +1169,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
     openBackgroundPanel,
     closeBackgroundPanel,
     setBackgroundProcesses,
+    addBgTask,
     hydrate,
     beginBuffer,
     commitSnapshot,

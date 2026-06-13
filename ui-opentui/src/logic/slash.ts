@@ -73,8 +73,10 @@ export interface SlashContext {
   readonly openPicker: (picker: PickerState) => void
   /** Open the agents dashboard (/agents, /tasks). */
   readonly openDashboard: () => void
-  /** Open the background-process panel (/bg). */
+  /** Open the OS background-process panel (/processes). */
   readonly openBackgroundPanel: () => void
+  /** Track an in-flight background-prompt task id (`/bg` → prompt.background). */
+  readonly addBgTask: (id: string) => void
   /** Cached `/model` picker rows (Epic 7 instant open); undefined until prefetched. */
   readonly modelItems: () => PickerItem[] | undefined
   /** Update the cached `/model` picker rows. */
@@ -212,7 +214,8 @@ const CLIENT_HELP_LINES = [
   '/clear, /new — clear the transcript (confirm)',
   '/compact [on|off|toggle] — compact transcript spacing',
   '/details [hidden|collapsed|expanded|cycle] — tool/reasoning detail',
-  '/bg — background processes (list + stop all)',
+  '/bg <prompt> — launch a background prompt',
+  '/processes — OS background processes (list + stop all)',
   '/replay [n|path] — inspect an archived spawn tree',
   '/mem — live memory stats (diag)',
   '/heapdump — write a V8 heap snapshot (diag)',
@@ -663,11 +666,36 @@ const toolsCmd: ClientHandler = async (arg, ctx) => {
   }
 }
 
+/** `/bg <prompt>` (aliases /background, /btw) — launch a background PROMPT via
+ *  `prompt.background` (Ink parity): echo "bg <id> started" and track the task so
+ *  the `bg: N` badge counts it until `background.complete` clears it. NOT the OS
+ *  process panel (that's /processes). */
+const backgroundCmd: ClientHandler = async (arg, ctx) => {
+  const text = arg.trim()
+  if (!text) {
+    ctx.pushSystem('/bg <prompt> — launch a background prompt')
+    return
+  }
+  try {
+    const r = await ctx.request('prompt.background', { session_id: ctx.sessionId(), text })
+    const taskId = readStr(r, 'task_id')
+    if (taskId) {
+      ctx.addBgTask(taskId)
+      ctx.pushSystem(`bg ${taskId} started`)
+    } else {
+      ctx.pushSystem('/bg: no task id returned')
+    }
+  } catch (error) {
+    ctx.pushSystem(`/bg: ${error instanceof Error ? error.message : 'failed'}`)
+  }
+}
+
 /** The TUI-only client commands (run in-process, never hit the gateway). */
 const CLIENT: Record<string, ClientHandler> = {
   agents: (_arg, ctx) => ctx.openDashboard(),
-  background: (_arg, ctx) => ctx.openBackgroundPanel(),
-  bg: (_arg, ctx) => ctx.openBackgroundPanel(),
+  background: backgroundCmd,
+  bg: backgroundCmd,
+  btw: backgroundCmd,
   clear: (_arg, ctx) => ctx.confirm('Clear the transcript?', ctx.clearTranscript),
   compact: compactCmd,
   copy: (arg, ctx) => {
@@ -678,8 +706,9 @@ const CLIENT: Record<string, ClientHandler> = {
   details: detailsCmd,
   exit: (_arg, ctx) => ctx.quit(),
   heapdump: heapdumpCmd,
-  jobs: (_arg, ctx) => ctx.openBackgroundPanel(),
   mem: memCmd,
+  processes: (_arg, ctx) => ctx.openBackgroundPanel(),
+  procs: (_arg, ctx) => ctx.openBackgroundPanel(),
   model: modelCmd,
   replay: replayCmd,
   resume: resumeCmd,

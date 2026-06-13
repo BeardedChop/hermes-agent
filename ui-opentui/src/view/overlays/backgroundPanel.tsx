@@ -11,7 +11,7 @@ import { type BoxRenderable } from '@opentui/core'
 import { useKeyboard } from '@opentui/solid'
 import { For, type JSXElement, onMount, Show } from 'solid-js'
 
-import { procIsRunning, type BackgroundProcess } from '../../logic/backgroundActivity.ts'
+import { procIsRunning, runningCount, type BackgroundProcess } from '../../logic/backgroundActivity.ts'
 import { truncRight } from '../../logic/truncate.ts'
 import { useDimensions } from '../dimensions.tsx'
 import { useCloseLayer } from '../keymap.tsx'
@@ -46,7 +46,7 @@ export function BackgroundPanel(props: {
   const dims = useDimensions()
   let rootRef: BoxRenderable | undefined
 
-  const running = () => props.processes.filter(p => procIsRunning(p.status)).length
+  const running = () => runningCount(props.processes)
 
   // Focus the root so the focus-within close layer is active; refresh once on
   // open so the list is fresh.

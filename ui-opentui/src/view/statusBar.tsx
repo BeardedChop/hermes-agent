@@ -29,8 +29,9 @@
  * metrics + labels, ok/warn dot, level-tinted ctx bar and cmp count.
  *
  * Background-activity chrome (glitch 2026-06-13): `⚡ N` = running subagents
- * (folded here from the old agents-tray line), `bg: N` = running OS background
- * processes (polled from `agents.list`). Both hidden at zero.
+ * (folded here from the old agents-tray line), `bg: N` = in-flight background
+ * PROMPTS (`/bg` → prompt.background, cleared on background.complete). Both
+ * hidden at zero. (OS background processes live in the /processes panel.)
  *
  * Parity notes (data that does not reach this TUI yet — reported, not faked):
  *   - `display.show_cost`: Ink reads it from its `config.get` polling loop,
@@ -42,7 +43,6 @@
 import { useKeyboard } from '@opentui/solid'
 import { createEffect, createMemo, createSignal, onCleanup, Show } from 'solid-js'
 
-import { runningCount } from '../logic/backgroundActivity.ts'
 import type { SessionStore } from '../logic/store.ts'
 import { truncLeft, truncRight } from '../logic/truncate.ts'
 import { isTrayAgent } from './agentsTray.tsx'
@@ -253,10 +253,10 @@ export function StatusBar(props: { store: SessionStore }) {
     const n = info().mcpServers ?? 0
     return segs().mcp && n > 0 ? `mcp: ${n}` : ''
   })
-  // `bg: N` — running OS background processes (polled into the store); the
-  // ambient half of the background-activity notifications (glitch 2026-06-13).
+  // `bg: N` — in-flight background-PROMPT tasks (`/bg` → prompt.background,
+  // cleared on background.complete), mirroring Ink's bgTasks count.
   const bgText = createMemo(() => {
-    const n = runningCount(props.store.state.backgroundProcesses)
+    const n = props.store.state.bgTasks.length
     return segs().bg && n > 0 ? `bg: ${n}` : ''
   })
   // `⚡ N` — running subagents. The ambient count lives HERE now (P4 input-density
