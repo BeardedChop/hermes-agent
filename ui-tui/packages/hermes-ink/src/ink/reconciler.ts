@@ -147,7 +147,7 @@ function applyProp(node: DOMElement, key: string, value: unknown): void {
 
 export const dispatcher = new Dispatcher()
 
-// --- SCROLL PROFILING (bench/scroll-e2e.sh reads via getLastYogaMs) ---
+// --- SCROLL PROFILING (tui-bench's scroll-e2e.sh reads via getLastYogaMs) ---
 // Set by onComputeLayout wrapper in ink.tsx; read by onRender for phases.
 let _lastYogaMs = 0
 let _lastCommitMs = 0

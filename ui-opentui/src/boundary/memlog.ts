@@ -5,7 +5,7 @@
  * sessions": instead of an external watcher chasing pids, every TUI session
  * logs its OWN samples when enabled, keyed by pid + boot time, into
  * `~/.hermes/logs/memwatch/`. Aggregate across sessions with
- * `bench/memwatch-report.mjs`.
+ * the tui-bench repo's `memwatch-report.mjs` (github.com/NousResearch/tui-bench).
  *
  * Gating (docs/opentui-env-flags.md): `HERMES_TUI_MEMLOG` — defaults to the
  * `HERMES_TUI_DIAGNOSTICS` master switch, individually overridable either way.

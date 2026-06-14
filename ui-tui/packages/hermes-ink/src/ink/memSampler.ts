@@ -3,7 +3,7 @@
 // walks the forked reconciler's root DOM tree and writes one NDJSON line per
 // sample to that fd: {"t":<epoch ms>,"dom":<DOM nodes>,"yoga":<live Yoga nodes>}.
 //
-// Used by bench/ (the instrumented node-count runs — see
+// Used by the tui-bench repo (the instrumented node-count runs — see
 // docs/plans/opentui-bench-suite.md). RSS from instrumented runs is flagged and
 // never headlined; this sampler exists ONLY as the mechanism witness for the
 // transcript-growth claim. It writes to a dedicated fd (3 by convention), never

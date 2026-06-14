@@ -31,7 +31,7 @@ plus an `.nvmrc` shim (`echo 26 > .nvmrc`) if you rely on auto-switching.
 
 - **Native modules are ABI-locked.** A `node_modules` installed under Node
   20/22 will not load under 26 (and vice versa) — run `npm ci` (or
-  `npm rebuild`) after switching versions. Same applies to `bench/`'s node-pty.
+  `npm rebuild`) after switching versions. Same applies to the **tui-bench** repo's node-pty (`github.com/NousResearch/tui-bench`).
 - **Global npm packages don't follow** between versions (per-version prefix);
   reinstall the few you need, or don't use globals.
 - **Editor terminals** (Zed/VS Code) need the `fnm env` line in your shell rc;
@@ -49,5 +49,5 @@ HERMES_TUI_MOUSE=1 node --experimental-ffi --no-warnings dist/main.js
 ```
 
 Gates: `npm run check` (typecheck + lint + tests). Memory/perf benchmarks live
-in `../bench/` (see its README). Transcript windowing (memory architecture) is
+in the **tui-bench** repo (`github.com/NousResearch/tui-bench`; see its README). Transcript windowing (memory architecture) is
 documented in `../docs/plans/opentui-transcript-windowing.md`.

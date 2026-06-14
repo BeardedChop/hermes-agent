@@ -41,7 +41,8 @@ run benches SEQUENTIALLY (the harness already wraps SUTs in `systemd-run … Mem
 - `docs/opentui-env-flags.md` — the consolidated env-flag ledger (master switch / user / dev / plumbing).
 - `docs/opentui-upstream-alignment.md` — forkless invariant, `boundary/` shim ledger, the per-release
   OpenTUI upgrade playbook (native-yoga is coming upstream — re-tune windowing margins when it lands).
-- `bench/README.md` — the bench suite (cells, harness, live-attach, memwatch).
+- the bench suite (cells, harness, live-attach, memwatch) now lives in its own
+  repo: **tui-bench** (`github.com/NousResearch/tui-bench`); see its `README.md`.
 - `ui-opentui/README.md` — Node 26 onboarding (fnm setup that doesn't disturb other projects).
 - `docs/plans/ink-memory-adversarial-review.md` — Ink's memory weaknesses (F1–F10, the turnabout).
 - `docs/plans/gateway-death-forensics.md`, `docs/plans/workorder-2026-06-11-results.md`,
@@ -70,8 +71,9 @@ run benches SEQUENTIALLY (the harness already wraps SUTs in `systemd-run … Mem
 `export HERMES_TUI_DIAGNOSTICS=1` in the shell rc turns on, for every session: the `/mem` +
 `/heapdump` slash commands, window-stats, and **fleet memory self-logging** to
 `~/.hermes/logs/memwatch/<boot>-<pid>.jsonl`. Aggregate all sessions with
-`node bench/memwatch-report.mjs` (per-session baseline/peak/slope + SLOPE/PEAK/MOUNTED anomaly
-flags). Chase a flagged session with `bench/live-attach.sh <pid> --heap`. The discipline: live
+`node memwatch-report.mjs` from the **tui-bench** repo
+(`github.com/NousResearch/tui-bench`) (per-session baseline/peak/slope + SLOPE/PEAK/MOUNTED anomaly
+flags). Chase a flagged session with tui-bench's `live-attach.sh <pid> --heap`. The discipline: live
 anomaly → encode as a bench cell → fix → validate against live sessions again.
 
 ## Current state (2026-06) + the ranked backlog
@@ -85,7 +87,7 @@ catalogs hydrated at boot**. Ranked next levers:
    `_resolve_tui_heap_mb`; both engines are Node now so both inherit it. Ink half = separate gated
    commit (shipping engine). Measured −90MB at bench scale.
 2. **cg_peak harness fix** (small): the cgroup `memory.peak` field is polluted (shared across runs) —
-   reset/scope it before quoting `bench/report.html` again. Trust `vmhwm_kb` + `samples[].rss_kb`.
+   reset/scope it before quoting tui-bench's `report.html` again. Trust `vmhwm_kb` + `samples[].rss_kb`.
 3. **New bench cells** (before W1, as its baselines): `resume-1900` (real p99 shape: time-to-first-
    paint + post-hydration RSS) and `10MB-tool-output` (the F1 byte-unbounded class). Run BOTH engines.
 4. **Catalog lazy-load** (new, promoted by live data): don't hydrate 1,185 tools at boot — fetch on

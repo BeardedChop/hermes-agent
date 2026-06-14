@@ -1,7 +1,7 @@
 # How the OpenTUI transcript got from 686MB to ~300MB — the full story
 
 *For: glitch. Branch: `feat/opentui-memory-window`. Everything here is measured,
-not vibes; every number has a result JSON in `bench/results/`.*
+not vibes; every number has a result JSON in the **tui-bench** repo's `results/` (`github.com/NousResearch/tui-bench`).*
 
 ---
 
@@ -200,7 +200,7 @@ the pre-windowing TUI literally could not do.
 - Everything is behind `HERMES_TUI_WINDOWING` (default on, `0` = bit-exact old
   behavior) — a one-env escape hatch if anything feels off in real use.
 
-*Where to verify: `bench/results/` (every number above), the design+gates doc
+*Where to verify: the **tui-bench** repo's `results/` (`github.com/NousResearch/tui-bench`; every number above), the design+gates doc
 `docs/plans/opentui-transcript-windowing.md`, tests in
 `ui-opentui/src/test/window.test.ts` and `transcriptWindow.test.tsx` (the
 zero-jank invariants are literal assertions: identical scrollHeight windowed
