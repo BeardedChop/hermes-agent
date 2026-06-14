@@ -30,6 +30,7 @@ import { GatewayService, type GatewayServiceShape } from '../boundary/gateway/Ga
 import { liveGatewayLayer } from '../boundary/gateway/liveGateway.ts'
 import { getLog } from '../boundary/log.ts'
 import { startMemlog } from '../boundary/memlog.ts'
+import { startProactiveGc } from '../boundary/proactiveGc.ts'
 import { registerVendoredParsers } from '../boundary/parsers.ts'
 import { acquireRenderer } from '../boundary/renderer.ts'
 import { makeAppLayer } from '../boundary/runtime.ts'
@@ -420,6 +421,11 @@ export const run = Effect.fn('Tui.run')(function* (input: TuiInput) {
       // switch — boundary/memlog.ts). Scoped acquire→release like the renderer.
       const stopMemlog = startMemlog()
       yield* Effect.addFinalizer(() => Effect.sync(stopMemlog))
+      // Proactive idle GC (W2) — opt-in via a low HERMES_TUI_HEAP_MB (no-op on
+      // the default path). Idle-gated on the store's streaming flag so it never
+      // collects mid-reply. Scoped release like memlog.
+      const proactiveGc = startProactiveGc(() => store.state.info.running === true)
+      yield* Effect.addFinalizer(() => Effect.sync(proactiveGc.stop))
       doQuit = () => {
         if (!renderer.isDestroyed) renderer.destroy()
       }
