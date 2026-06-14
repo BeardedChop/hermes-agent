@@ -7,6 +7,7 @@ import { describe, expect, test } from 'vitest'
 
 import {
   type BackgroundProcess,
+  isChromeNotice,
   parseNotification,
   parseProcessList,
   runningCount
@@ -55,6 +56,31 @@ describe('parseNotification', () => {
   test('non-number ttl_ms is dropped (no ttlMs)', () => {
     const n = parseNotification({ id: 'a', text: 'x', ttl_ms: 'soon' })
     expect(n?.ttlMs).toBeUndefined()
+  })
+
+  test('preserves level "success" (previously dropped to info)', () => {
+    expect(parseNotification({ id: 's', level: 'success', text: 'credits topped up' })?.level).toBe('success')
+  })
+
+  test('ttl credits notice: kind "ttl" + ttl_ms → kind/ttlMs preserved', () => {
+    const n = parseNotification({ kind: 'ttl', text: 'low on credits', ttl_ms: 8000 })
+    expect(n?.kind).toBe('ttl')
+    expect(n?.ttlMs).toBe(8000)
+  })
+})
+
+describe('isChromeNotice', () => {
+  const mk = (kind: string): Parameters<typeof isChromeNotice>[0] => ({ id: 'i', kind, level: 'info', text: 't' })
+
+  test('true for lifecycle kinds sticky | ttl (credits/usage notices)', () => {
+    expect(isChromeNotice(mk('sticky'))).toBe(true)
+    expect(isChromeNotice(mk('ttl'))).toBe(true)
+  })
+
+  test('false for label kinds / empty (inline process+background cards)', () => {
+    expect(isChromeNotice(mk('process.complete'))).toBe(false)
+    expect(isChromeNotice(mk(''))).toBe(false)
+    expect(isChromeNotice(mk('background task complete'))).toBe(false)
   })
 })
 

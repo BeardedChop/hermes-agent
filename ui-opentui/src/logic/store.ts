@@ -26,7 +26,12 @@ import { diffStats, type DiffStats } from './diff.ts'
 import type { SessionTabId } from './sessionPicker.ts'
 import { envFlag, envOutputUnlimited } from './env.ts'
 import { registerNotifier } from './notify.ts'
-import { parseNotification, type ActivityNotification, type BackgroundProcess } from './backgroundActivity.ts'
+import {
+  isChromeNotice,
+  parseNotification,
+  type ActivityNotification,
+  type BackgroundProcess
+} from './backgroundActivity.ts'
 import { stripAnsi, stripOmittedNote, stripToolEnvelope } from './toolOutput.ts'
 import { DEFAULT_THEME, type Theme, themeFromSkin } from './theme.ts'
 
@@ -271,6 +276,14 @@ export interface StoreState {
    *  seam (terminalChrome) watches this to fire a desktop ping; the inline card
    *  lives in `messages`. Undefined until the first notification. */
   lastNotification: ActivityNotification | undefined
+  /** The visible CHROME notice — a persistent status-bar banner with a lifecycle
+   *  (credits/usage `kind:'sticky'|'ttl'`), distinct from the inline `messages`
+   *  cards. Phase 3 renders it; the store owns its state + lifecycle. null = none. */
+  notice: ActivityNotification | null
+  /** A chrome notice held mid-turn (arrived while `info.running`) — applied on
+   *  `message.complete` so a notice never flashes over a live reply. Latest-wins
+   *  (a newer pending replaces an older). null = nothing held. */
+  pendingNotice: ActivityNotification | null
   /** Live session chrome for the status bar (model/effort/cwd/branch/context/running). */
   info: SessionInfo
   /** Transient hint shown above the composer (e.g. "Ctrl+C again to quit" — item 11);
@@ -479,6 +492,8 @@ export function createSessionStore(options?: SessionStoreOptions) {
     backgroundProcesses: [],
     bgTasks: [],
     lastNotification: undefined,
+    notice: null,
+    pendingNotice: null,
     status: undefined,
     // startedAt is set ONCE here (store creation ≈ session start) — the status
     // bar's session-duration segment ticks from it; wire patches never carry it.
@@ -512,6 +527,12 @@ export function createSessionStore(options?: SessionStoreOptions) {
   // Hydrate-while-buffering (resume): while a snapshot is loading, live events
   // queue here and replay after the snapshot is reconciled (opencode sync-v2).
   let buffering: GatewayEvent[] | null = null
+
+  // Chrome-notice TTL timer (NOT store state — a transient handle, not reactive
+  // data). At most ONE armed at a time: every applyNotice clears the prior before
+  // arming a new one (latest-wins), and the callback nulls it on fire. Mirrors the
+  // Ink turnController's single `noticeTimer` handle.
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined
 
   // Anti-flood for `gateway.stderr`: a crashing child can emit a torrent of
   // stderr lines, so we do NOT push each to the transcript. Instead we keep a
@@ -627,6 +648,66 @@ export function createSessionStore(options?: SessionStoreOptions) {
     )
   }
 
+  // ── chrome notice lifecycle (port of ui-tui turnController showNotice/
+  // applyNotice/clearNotice/flushPendingNotice) — the persistent status-bar
+  // banner, distinct from the inline `messages` cards. ────────────────────────
+
+  /** Make a notice VISIBLE now (the actual `state.notice` write + TTL arming).
+   *  Latest-wins: always clear any prior TTL timer first, so a fresh notice can't
+   *  be expired by a stale predecessor's timer. A `ttl` kind with a positive
+   *  ttlMs self-clears after ttlMs — but only if it's still the same notice on
+   *  screen (an `id` guard, so a later notice that replaced it isn't yanked). */
+  function applyNotice(n: ActivityNotification) {
+    if (noticeTimer) clearTimeout(noticeTimer)
+    noticeTimer = undefined
+    setState('notice', n)
+    if (n.kind === 'ttl' && typeof n.ttlMs === 'number' && n.ttlMs > 0) {
+      noticeTimer = setTimeout(() => {
+        noticeTimer = undefined
+        if (state.notice?.id === n.id) setState('notice', null)
+      }, n.ttlMs)
+    }
+  }
+
+  /** Show a chrome notice, deferring it mid-turn. While a turn runs (`info.running`)
+   *  a banner would flash over the live reply, so HOLD it as `pendingNotice`
+   *  (latest-wins — a newer pending just replaces the older) and apply it on
+   *  message.complete (flushPendingNotice). Idle → apply immediately. */
+  function showNotice(n: ActivityNotification) {
+    if (state.info.running) setState('pendingNotice', n)
+    else applyNotice(n)
+  }
+
+  /** Clear a notice by key (`notification.clear`) from BOTH the pending hold and
+   *  the visible slot. A key lives in only one notice at a time, but clearing
+   *  both is safe (and matches the Ink semantics). Clears the TTL timer when the
+   *  visible notice is the one removed. */
+  function clearNotice(key: string) {
+    if (state.pendingNotice?.key === key) setState('pendingNotice', null)
+    if (state.notice?.key === key) {
+      if (noticeTimer) clearTimeout(noticeTimer)
+      noticeTimer = undefined
+      setState('notice', null)
+    }
+  }
+
+  /** Apply any notice held mid-turn (call on message.complete). No-op when none. */
+  function flushPendingNotice() {
+    const p = state.pendingNotice
+    if (!p) return
+    setState('pendingNotice', null)
+    applyNotice(p)
+  }
+
+  /** Reset all notice state (timer + visible + pending) — so a notice can't bleed
+   *  across a /clear or /new into the next session. */
+  function clearNoticeState() {
+    if (noticeTimer) clearTimeout(noticeTimer)
+    noticeTimer = undefined
+    setState('notice', null)
+    setState('pendingNotice', null)
+  }
+
   /** Clear the transcript (e.g. /clear, /new) and any tracked subagents. */
   function clearTranscript() {
     setState('messages', [])
@@ -634,6 +715,8 @@ export function createSessionStore(options?: SessionStoreOptions) {
     setState('dropped', 0)
     // Drop the dedup history too — a fresh transcript should re-process any id.
     applied.clear()
+    // A chrome notice must not survive a transcript reset (new session context).
+    clearNoticeState()
   }
 
   /** Open / close the agents dashboard overlay (/agents). The optional `agentId`
@@ -778,6 +861,14 @@ export function createSessionStore(options?: SessionStoreOptions) {
         break
       case 'message.start':
         setState('status', undefined)
+        // Flash-and-yield: a credits usage/grant notice yields to the live turn it
+        // precedes (it's stale the moment the user sends), so clear it before the
+        // turn opens. Sticky credits notices (e.g. depleted) persist. Port of the
+        // Ink turnController startMessage flash-and-yield.
+        {
+          const k = state.notice?.key
+          if (k === 'credits.usage' || k === 'credits.grant_spent') clearNotice(k)
+        }
         setState('info', prev => ({ ...prev, running: true }))
         setState(
           produce(draft => {
@@ -814,6 +905,9 @@ export function createSessionStore(options?: SessionStoreOptions) {
         )
         setState('status', undefined)
         setState('info', prev => ({ ...prev, running: false }))
+        // Apply any chrome notice held mid-turn now the turn's done (no flash over
+        // a live reply). No-op when nothing was held.
+        flushPendingNotice()
         // message.complete carries the latest usage/context — refresh the bar.
         if (event.payload) applyInfo(event.payload)
         break
@@ -831,12 +925,25 @@ export function createSessionStore(options?: SessionStoreOptions) {
       // records lastNotification so the OSC seam can ping a blurred terminal.
       case 'notification.show': {
         const n = parseNotification(event.payload)
-        if (n) pushNotification(n)
+        if (!n) break
+        // Route by chrome-ness. Approach (a): lastNotification (the OSC seam) is
+        // recorded by `pushNotification` for the CARD path, so we set it here only
+        // for the CHROME path — avoids double-setting and keeps the existing
+        // pushNotification callers (background.complete) recording it correctly.
+        if (isChromeNotice(n)) {
+          setState('lastNotification', { ...n }) // OSC seam (distinct clone — aliasing footgun)
+          showNotice({ ...n }) // distinct clone again: notice + lastNotification must not share a ref
+        } else {
+          pushNotification(n) // pushNotification records lastNotification itself (card path)
+        }
         break
       }
       case 'notification.clear': {
         const key = event.payload?.key
-        if (key) clearNotificationCards(key)
+        if (key) {
+          clearNotificationCards(key) // inline-card path
+          clearNotice(key) // chrome path (key lives in one path; both is safe)
+        }
         break
       }
       // A background PROMPT (`/bg`) finished: drop it from the in-flight set (the
@@ -1039,6 +1146,9 @@ export function createSessionStore(options?: SessionStoreOptions) {
       // the user their in-flight reply was lost, and show a recovering status.
       case 'gateway.exited': {
         setState('info', prev => ({ ...prev, running: false }))
+        // A turn can also end via the child exiting mid-reply (no message.complete) —
+        // flush any held notice here too, the third turn-end site (Ink interruptTurn).
+        flushPendingNotice()
         // Neutral status: we don't ALWAYS recover (budget exhaustion). The
         // "recovering…" wording now comes from the gateway.recovering case,
         // which fires only when a respawn is actually scheduled.
@@ -1075,6 +1185,9 @@ export function createSessionStore(options?: SessionStoreOptions) {
       case 'error': {
         const message = event.payload?.message
         pushSystem(message ? `error: ${message}` : 'error')
+        // A turn can end via error without message.complete — flush any held
+        // notice here too, matching Ink recordError.
+        flushPendingNotice()
         break
       }
       // Other event types (chrome) are reduced in later phases; unhandled members
@@ -1097,6 +1210,12 @@ export function createSessionStore(options?: SessionStoreOptions) {
 
   /** Replace history with the resume snapshot, then replay events buffered meanwhile. */
   function commitSnapshot(snapshot: Message[]): void {
+    // Resume replaces session context — a prior session's notice/timer must not
+    // bleed in; mirrors Ink reset(). Deliberate tradeoff: a same-session
+    // auto-heal reconnect momentarily drops a standing sticky banner, which the
+    // gateway re-emits on the next header parse — acceptable vs. cross-session
+    // bleed + a leaked timer.
+    clearNoticeState()
     // Slice to the cap BEFORE the first setState, not after. Yoga (WASM) layout
     // memory is grow-only, so even a TRANSIENT mount of an over-cap resume
     // snapshot would permanently ratchet the high-water mark — a set-then-trim
@@ -1145,6 +1264,8 @@ export function createSessionStore(options?: SessionStoreOptions) {
     pushUser,
     pushSystem,
     pushNotification,
+    showNotice,
+    clearNotice,
     setCatalog,
     setSessionId,
     clearTranscript,

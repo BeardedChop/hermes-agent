@@ -339,4 +339,36 @@ describe('App render (Phase 1, themed)', () => {
     expect(frame).toContain('select') // footer hint "↑↓ select"
     expect(frame).not.toContain('parent turn') // transcript replaced by the dashboard
   })
+
+  test('a chrome usage notice renders as a banner in the input zone (mount integration)', async () => {
+    const store = createSessionStore()
+    store.apply({ type: 'gateway.ready' })
+    // A credits/usage notice (kind sticky) → routed to the chrome banner, NOT an
+    // inline transcript card. Verifies the NoticeBanner mount above the status bar
+    // and that the (already-glyphed) text renders verbatim in the real App layout.
+    store.apply({
+      type: 'notification.show',
+      payload: {
+        text: '⚠ Credits 90% used · $20 cap',
+        level: 'warn',
+        kind: 'sticky',
+        key: 'credits.usage',
+        id: 'credits.usage'
+      }
+    })
+
+    const frame = await captureFrame(
+      () => (
+        <ThemeProvider theme={() => store.state.theme}>
+          <App store={store} />
+        </ThemeProvider>
+      ),
+      { until: 'ready', width: 60, height: 16 }
+    )
+
+    expect(frame).toContain('Credits 90% used') // banner text, verbatim
+    expect(frame).not.toContain('◆') // NOT the inline-card marker — it's a banner, not a card
+    expect(store.state.notice?.key).toBe('credits.usage') // routed to the chrome slot
+    expect(store.state.messages.some(m => m.role === 'notification')).toBe(false) // no card pushed
+  })
 })

@@ -26,6 +26,7 @@ import { AgentsTray, type AgentsTrayApi } from './agentsTray.tsx'
 import { Composer } from './composer.tsx'
 import { DimensionsProvider } from './dimensions.tsx'
 import { Header } from './header.tsx'
+import { NoticeBanner } from './noticeBanner.tsx'
 import { AgentsDashboard } from './overlays/agentsDashboard.tsx'
 import { BackgroundPanel } from './overlays/backgroundPanel.tsx'
 import { Pager } from './overlays/pager.tsx'
@@ -142,6 +143,7 @@ export function App(props: AppProps) {
                   borderColor={theme().color.border}
                   style={{ flexShrink: 0, flexDirection: 'column' }}
                 >
+                  <NoticeBanner notice={props.store.state.notice} />
                   <StatusBar store={props.store} />
                   <Switch
                     fallback={

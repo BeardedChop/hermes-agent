@@ -17,7 +17,7 @@ export interface ActivityNotification {
   id: string
   key?: string
   text: string
-  level: 'info' | 'warn' | 'error'
+  level: 'info' | 'warn' | 'error' | 'success'
   kind: string
   ttlMs?: number
 }
@@ -46,7 +46,14 @@ function readNum(value: unknown, key: string): number | undefined {
 /** Coerce any wire `level` to the closed union; anything that isn't a known
  *  level (absent, garbage, wrong-typed) falls back to 'info'. */
 function coerceLevel(value: unknown): ActivityNotification['level'] {
-  return value === 'warn' || value === 'error' ? value : 'info'
+  return value === 'warn' || value === 'error' || value === 'success' ? value : 'info'
+}
+
+/** A chrome notice (status-bar banner with lifecycle), distinguished from an
+ *  inline card by its lifecycle kind. Credits/usage notices set kind sticky|ttl;
+ *  process/background cards use label kinds (process.complete, etc.). */
+export function isChromeNotice(n: ActivityNotification): boolean {
+  return n.kind === 'sticky' || n.kind === 'ttl'
 }
 
 /**
