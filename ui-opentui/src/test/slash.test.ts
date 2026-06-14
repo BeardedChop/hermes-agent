@@ -9,6 +9,8 @@ import {
   buildModelTabs,
   classifySubmit,
   clientCommandNames,
+  catalogCommandItems,
+  createCompletionGate,
   dispatchSlash,
   mapCompletions,
   parseSlash,
@@ -74,6 +76,63 @@ describe('mapCompletions', () => {
     ])
     expect(mapCompletions({ items: [] })).toEqual([])
     expect(mapCompletions(null)).toEqual([])
+  })
+})
+
+describe('catalogCommandItems (slash-highlight boot seed — glitch 2026-06-14)', () => {
+  test('extracts the /name from each commands.catalog pair', () => {
+    expect(
+      catalogCommandItems({
+        pairs: [
+          ['/handoff', 'compact the conversation'],
+          ['/model', 'switch model'],
+          ['/clear', '']
+        ]
+      })
+    ).toEqual([{ text: '/handoff' }, { text: '/model' }, { text: '/clear' }])
+  })
+  test('shape-defensive: junk / missing pairs → []', () => {
+    expect(catalogCommandItems(null)).toEqual([])
+    expect(catalogCommandItems({})).toEqual([])
+    expect(catalogCommandItems({ pairs: 'nope' })).toEqual([])
+    // skip non-array pairs, non-string names, and empty names
+    expect(catalogCommandItems({ pairs: [['/ok', 'd'], 42, [123, 'd'], ['', 'd'], []] })).toEqual([{ text: '/ok' }])
+  })
+})
+
+describe('createCompletionGate (out-of-order completion guard — glitch 2026-06-14)', () => {
+  test('only the most-recently-claimed token is current', () => {
+    const gate = createCompletionGate()
+    const a = gate.claim()
+    expect(gate.isCurrent(a)).toBe(true)
+    const b = gate.claim()
+    // a newer keystroke superseded `a`
+    expect(gate.isCurrent(a)).toBe(false)
+    expect(gate.isCurrent(b)).toBe(true)
+  })
+
+  test('reproduces the bug scenario: a slow earlier response is dropped, a fresh one applies', () => {
+    // Model the exact sequence: a slow `complete.slash` from a bare `/`, then a
+    // synchronous clear keystroke (no RPC), then an `@`-mention `complete.path`.
+    const gate = createCompletionGate()
+    const slashToken = gate.claim() // user typed `/` → complete.slash fired
+    gate.claim() // user typed `/x` → planCompletion null → clear branch (no RPC)
+    // …user submits, then types `@file`:
+    const pathToken = gate.claim() // complete.path fired
+
+    // The slow complete.slash resolves LAST — it must be dropped, not applied,
+    // so it can't blank/clobber the @-mention dropdown.
+    expect(gate.isCurrent(slashToken)).toBe(false)
+    // The @-mention response is still current and applies.
+    expect(gate.isCurrent(pathToken)).toBe(true)
+  })
+
+  test('independent gates do not share state', () => {
+    const g1 = createCompletionGate()
+    const g2 = createCompletionGate()
+    const t1 = g1.claim()
+    g2.claim()
+    expect(g1.isCurrent(t1)).toBe(true) // g2's claim doesn't supersede g1's
   })
 })
 

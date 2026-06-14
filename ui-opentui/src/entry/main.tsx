@@ -41,6 +41,8 @@ import { createPasteStore } from '../logic/pastes.ts'
 import { mapResumeHistory } from '../logic/resume.ts'
 import {
   classifySubmit,
+  catalogCommandItems,
+  createCompletionGate,
   dispatchSlash,
   mapCompletions,
   mapModelOptions,
@@ -51,6 +53,7 @@ import {
 } from '../logic/slash.ts'
 import { createSessionStore, type SessionStore } from '../logic/store.ts'
 import { App } from '../view/App.tsx'
+import { seedLearnedNames } from '../view/composer.tsx'
 import { TerminalChrome } from '../view/terminalChrome.tsx'
 
 // Syntax-highlighting language expansion: register the vendored tree-sitter
@@ -158,6 +161,17 @@ const postSessionSetup = (gateway: GatewayServiceShape, store: SessionStore, sid
       .request<unknown>('startup.catalog', { session_id: sid })
       .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
     if (catalog) store.setCatalog(catalog)
+
+    // Seed the composer's slash-highlight catalog ONCE at boot (glitch
+    // 2026-06-14): `commands.catalog` returns the full uncapped command + skill
+    // name list ({pairs:[["/name","desc"],…]}); feeding the names through
+    // seedLearnedNames means a cold `/command` highlights on the first keystroke
+    // instead of only after its completion batch was browsed earlier. Best-effort
+    // — a failure just leaves the old lazy-learn behavior.
+    const cmdCatalog = yield* gateway
+      .request<unknown>('commands.catalog', {})
+      .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+    seedLearnedNames(catalogCommandItems(cmdCatalog))
 
     const prompt = initialPrompt?.trim()
     if (prompt) {
@@ -567,15 +581,32 @@ export const run = Effect.fn('Tui.run')(function* (input: TuiInput) {
       // accepted item replaces from the gateway's `replace_from` (or the token
       // start), so only the relevant token is spliced — not the whole line.
       // Fired per keystroke (a debounce is a polish item).
+      //
+      // Out-of-order guard (glitch 2026-06-14): the gateway transport does NOT
+      // guarantee in-order response delivery, and these RPCs fire per keystroke
+      // with no debounce — a slow earlier `complete.slash` could resolve AFTER a
+      // later `@`-mention `complete.path` and clobber the store, blanking the
+      // `@` dropdown ("a leading /path message breaks @-mentions afterward").
+      // The completion gate (claimed on EVERY call, before the clear branch, so
+      // an intermediate keystroke that fires no RPC still invalidates the older
+      // in-flight one) drops any response a newer keystroke has superseded.
+      const completionGate = createCompletionGate()
       const onType = (text: string, cursor: number = text.length) => {
+        const token = completionGate.claim()
         const plan = planCompletion(text, cursor)
         if (!plan) {
           store.clearCompletions()
           return
         }
         Effect.runPromise(gateway.request(plan.method, plan.params))
-          .then(result => store.setCompletions(mapCompletions(result), readReplaceFrom(result, plan.from)))
-          .catch(() => store.clearCompletions())
+          .then(result => {
+            if (!completionGate.isCurrent(token)) return // a newer keystroke superseded this query
+            store.setCompletions(mapCompletions(result), readReplaceFrom(result, plan.from))
+          })
+          .catch(() => {
+            if (!completionGate.isCurrent(token)) return
+            store.clearCompletions()
+          })
       }
 
       // Blocking-prompt replies (clarify/approval/sudo/secret `*.respond`). Same

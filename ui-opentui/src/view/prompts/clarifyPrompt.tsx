@@ -20,6 +20,7 @@ import { type InputRenderable } from '@opentui/core'
 import { useKeyboard } from '@opentui/solid'
 import { createEffect, createMemo, createSignal, For } from 'solid-js'
 
+import { Markdown } from '../markdown.tsx'
 import { useTheme } from '../theme.tsx'
 
 export function ClarifyPrompt(props: {
@@ -84,10 +85,14 @@ export function ClarifyPrompt(props: {
       style={{ borderColor: theme().color.border, flexDirection: 'column', flexShrink: 0, marginTop: 1, padding: 1 }}
       border
     >
-      {/* the question WRAPS within the bordered box width (F5) */}
-      <text fg={theme().color.label}>
-        <b>? {props.question}</b>
-      </text>
+      {/* the question WRAPS within the bordered box width (F5) and renders
+          markdown (bold/italic/`code`) via the native <markdown> renderable —
+          same engine as the transcript, so `**x**`/backticks aren't shown raw
+          (glitch 2026-06-14). The `? ` lead is part of the markdown content so
+          it sits inline with the first rendered word. */}
+      <box style={{ flexDirection: 'column', flexShrink: 0 }}>
+        <Markdown text={`? ${props.question}`} fg={theme().color.label} />
+      </box>
 
       <box style={{ flexDirection: 'column', marginTop: 1 }}>
         <For each={choices()}>
@@ -100,14 +105,13 @@ export function ClarifyPrompt(props: {
                 paddingRight: 1
               }}
             >
-              {/* numbered + accent-when-selected; the text wraps (F5) */}
+              {/* numbered + accent-when-selected; the choice text renders
+                  markdown (bold/`code`) and wraps within the flex column (F5).
+                  `fg` carries the selection accent as the base prose color. */}
               <text fg={i() === selected() ? theme().color.accent : theme().color.muted}>{`${i() + 1}. `}</text>
-              <text
-                style={{ flexGrow: 1, minWidth: 0 }}
-                fg={i() === selected() ? theme().color.accent : theme().color.text}
-              >
-                {choice}
-              </text>
+              <box style={{ flexDirection: 'column', flexGrow: 1, minWidth: 0 }}>
+                <Markdown text={choice} fg={i() === selected() ? theme().color.accent : theme().color.text} />
+              </box>
             </box>
           )}
         </For>

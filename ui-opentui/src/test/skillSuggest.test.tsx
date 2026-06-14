@@ -23,7 +23,7 @@ import { createPromptHistory } from '../logic/history.ts'
 import { planCompletion } from '../logic/slash.ts'
 import { createSessionStore, type CompletionItem, type SessionStore } from '../logic/store.ts'
 import { App } from '../view/App.tsx'
-import { resetLearnedNames } from '../view/composer.tsx'
+import { resetLearnedNames, seedLearnedNames } from '../view/composer.tsx'
 import { ThemeProvider } from '../view/theme.tsx'
 import { renderProbe, type RenderProbe } from './lib/render.ts'
 
@@ -245,6 +245,30 @@ describe('exact-match token highlight (native editBuffer ranges)', () => {
       expect(span).toBeDefined()
       const accent = RGBA.fromHex(h.store.state.theme.color.accent).toInts()
       expect(span!.fg.toInts().slice(0, 3)).not.toEqual(accent.slice(0, 3))
+    } finally {
+      h.probe.destroy()
+    }
+  })
+
+  // glitch 2026-06-14: highlighting used to be hit-or-miss — a `/command` only
+  // painted accent if its completion batch had been browsed EARLIER in the
+  // session (the catalog started empty and grew lazily). The boot now seeds the
+  // catalog from `commands.catalog` via seedLearnedNames, so a cold command —
+  // typed as the very first keystrokes, with NO prior `/prefix` teaching —
+  // highlights immediately. This pins that fix.
+  test('a SEEDED command highlights cold (no prior /prefix teaching)', async () => {
+    seedLearnedNames([{ text: '/handoff' }, { text: 'review' }])
+    const h = await mountComposer()
+    try {
+      // type the whole command in one burst — there is no earlier slash batch to
+      // teach the catalog, so this only highlights because of the boot seed.
+      await h.probe.keys.typeText('/handoff')
+      await h.probe.settle()
+      await h.probe.waitForFrame(f => f.includes('/handoff'))
+      const span = findSpan(h, '/handoff')
+      expect(span).toBeDefined()
+      const accent = RGBA.fromHex(h.store.state.theme.color.accent).toInts()
+      expect(span!.fg.toInts().slice(0, 3)).toEqual(accent.slice(0, 3))
     } finally {
       h.probe.destroy()
     }

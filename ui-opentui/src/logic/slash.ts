@@ -188,6 +188,49 @@ export function mapCompletions(result: unknown): CompletionItem[] {
   return out
 }
 
+/** Extract `{text}` items from a `commands.catalog` result ({pairs:[["/name",
+ *  "desc"],…]}) for seeding the composer's slash-highlight catalog at boot
+ *  (glitch 2026-06-14). Each pair's first element is the `/name`; non-string or
+ *  empty entries are skipped. Shape-defensive — any junk → []. */
+export function catalogCommandItems(result: unknown): { text: string }[] {
+  if (!result || typeof result !== 'object') return []
+  const pairs = (result as { pairs?: unknown }).pairs
+  if (!Array.isArray(pairs)) return []
+  const out: { text: string }[] = []
+  for (const pair of pairs as unknown[]) {
+    const name = Array.isArray(pair) ? (pair as unknown[])[0] : undefined
+    if (typeof name === 'string' && name) out.push({ text: name })
+  }
+  return out
+}
+
+/**
+ * A monotonic gate for the per-keystroke completion RPCs (glitch 2026-06-14).
+ * The gateway transport does NOT guarantee in-order response delivery and
+ * `onType` fires an RPC per keystroke with no debounce, so a slow earlier query
+ * (the first bare-`/` `complete.slash`) can resolve AFTER a newer one (an
+ * `@`-mention `complete.path`) and clobber the store with stale results — which
+ * is what made "a leading /path message breaks @-mentions afterward."
+ *
+ * `claim()` is called once per keystroke (BEFORE the early-return clear branch,
+ * so an intermediate keystroke that fires no RPC still invalidates the older
+ * in-flight one) and returns a token; `isCurrent(token)` is true only for the
+ * most recently claimed token, so a resolving response applies ONLY when no
+ * newer keystroke has superseded it.
+ */
+export interface CompletionGate {
+  claim: () => number
+  isCurrent: (token: number) => boolean
+}
+
+export function createCompletionGate(): CompletionGate {
+  let seq = 0
+  return {
+    claim: () => ++seq,
+    isCurrent: (token: number) => token === seq
+  }
+}
+
 /** Long output → the pager; short → a system line (Ink: >180 chars or >2 lines). */
 function present(ctx: SlashContext, title: string, text: string): void {
   const long = text.length > 180 || text.split('\n').filter(Boolean).length > 2

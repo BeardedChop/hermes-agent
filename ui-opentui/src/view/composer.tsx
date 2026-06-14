@@ -75,6 +75,19 @@ export function resetLearnedNames(): void {
   LEARNED_NAMES.clear()
 }
 
+/** Seed the learned command/skill catalog at boot (glitch 2026-06-14): the
+ *  catalog used to start EMPTY and only grow as the user typed each `/prefix`,
+ *  so `/handoff` highlighted ONLY if its completion batch was seen earlier in
+ *  the session (hit-or-miss highlighting). The entry boot fetches the full
+ *  `commands.catalog` once and seeds every name here, so a cold `/command` is
+ *  highlighted on the first keystroke. Items arrive as `/name` or `name`;
+ *  normalization + the valid-name filter are reused from `learnableNames`
+ *  (the `'/'` text passes its bare-lead-token gate). Best-effort and additive —
+ *  it never clears, so live `learnableNames` growth still tops it up. */
+export function seedLearnedNames(items: ReadonlyArray<{ text: string }>): void {
+  for (const name of learnableNames('/', items)) LEARNED_NAMES.add(name)
+}
+
 /** Keys that must NOT steal focus back to the composer (scroll/edit/nav). */
 const NAV_KEYS = new Set([
   'return',
