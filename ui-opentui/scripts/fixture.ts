@@ -130,7 +130,12 @@ function toolEvents(seed: number, t: number): GatewayEvent[] {
   const name = TOOL_NAMES[(seed + t) % TOOL_NAMES.length] ?? 'terminal'
   const variant = (seed + t) % 3
   // short / capped-16-line / medium result bodies, mixing the render-cost cases.
-  const bodyLines = variant === 0 ? 2 : variant === 1 ? 18 : 7
+  // BENCH KNOB: HERMES_BENCH_TOOL_BODY_LINES overrides the body size to N lines
+  // for ALL tools — the "fat tool output" fixture (e.g. a `find /` dump) used to
+  // make W3's retention win measurable. UNSET = the original tiny bodies (so the
+  // default fixture stays byte-identical; existing benches are unaffected).
+  const fatLines = Number.parseInt(process.env.HERMES_BENCH_TOOL_BODY_LINES ?? '', 10)
+  const bodyLines = Number.isFinite(fatLines) && fatLines > 0 ? fatLines : variant === 0 ? 2 : variant === 1 ? 18 : 7
   const resultText = lines(seed + t * 3, bodyLines)
   const context = sentence(seed + t, 4)
   // ~half the tools carry a multi-line args block (the expanded-view cost).
