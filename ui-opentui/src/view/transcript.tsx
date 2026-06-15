@@ -84,11 +84,11 @@
  * single user-caused frame absorbs the estimate error (the design's accepted
  * "remounted for view" path).
  */
-import type { BoxRenderable, ScrollBoxRenderable } from '@opentui/core'
+import type { BoxRenderable, ScrollAcceleration, ScrollBoxRenderable } from '@opentui/core'
 import { useRenderer } from '@opentui/solid'
 import { createComputed, createMemo, createSelector, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js'
 
-import { diagnosticsEnabled, envFlag } from '../logic/env.ts'
+import { diagnosticsEnabled, envFlag, scrollSpeedMultiplier } from '../logic/env.ts'
 import type { Message, SessionStore } from '../logic/store.ts'
 import {
   computeWindow,
@@ -107,6 +107,24 @@ import { HomeHint } from './homeHint.tsx'
 import { MessageLine, turnSpacing } from './messageLine.tsx'
 import { ScrollAnchorProvider } from './scrollAnchor.tsx'
 import { useTheme } from './theme.tsx'
+
+/**
+ * A constant-multiplier scroll acceleration — the OpenTUI port of Ink's
+ * `HERMES_TUI_SCROLL_SPEED` base. OpenTUI owns the wheel-accel CURVE natively
+ * (lib/scroll-acceleration.ts MacOSScrollAccel); this just lets a user dial the
+ * base rows/event up or down by a fixed factor. Installed ONLY when the env var
+ * is set (scrollSpeedMultiplier returns null otherwise → native default kept).
+ */
+function constantScrollAccel(multiplier: number): ScrollAcceleration {
+  return {
+    tick: () => multiplier,
+    reset: () => {}
+  }
+}
+
+/** Module-level: read once at first mount (env is fixed for the process life). */
+const scrollSpeed = scrollSpeedMultiplier()
+const scrollAccel: ScrollAcceleration | undefined = scrollSpeed !== null ? constantScrollAccel(scrollSpeed) : undefined
 
 /**
  * The bottom K rows are ALWAYS mounted (the sticky-bottom region the user
@@ -487,6 +505,7 @@ export function Transcript(props: { store: SessionStore }) {
         contentOptions={{ paddingRight: 1 }}
         stickyScroll
         stickyStart="bottom"
+        {...(scrollAccel ? { scrollAcceleration: scrollAccel } : {})}
       >
         <ScrollAnchorProvider scroll={scroll}>
           {/* display flags (/compact, /details — Epic 3) for the rows below */}

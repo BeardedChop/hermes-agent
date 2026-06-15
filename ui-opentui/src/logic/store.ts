@@ -191,6 +191,30 @@ const SUBAGENT_TRACE_LIMIT = 200
  * Ctrl-C interrupt (item 11) reads; we also flip it locally on message.start/
  * complete so the bar reacts instantly even if a `session.info` lags.
  */
+/** Todo task states (mirrors tools/todo_tool.py). */
+export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
+
+/** One todo item (content + state); list ORDER is priority — never re-sort. */
+export interface TodoItem {
+  content: string
+  status: TodoStatus
+}
+
+/** Counts by state for the panel header + status-bar chip. */
+export interface TodoCounts {
+  total: number
+  completed: number
+  in_progress: number
+  pending: number
+  cancelled: number
+}
+
+/** The pinned TodoPanel's live source: the latest todo-tool snapshot. */
+export interface TodoSnapshot {
+  todos: TodoItem[]
+  counts: TodoCounts
+}
+
 export interface SessionInfo {
   model?: string
   effort?: string
@@ -243,6 +267,14 @@ export interface StoreState {
   theme: Theme
   /** The active blocking prompt (composer is hidden while set); undefined when none. */
   prompt: ActivePrompt | undefined
+  /** The composer's in-progress draft text, persisted so it survives the
+   *  composer unmounting when a blocking prompt (clarify/approval) replaces it
+   *  in the <Switch>. Restored on the next composer mount; cleared on submit. */
+  composerDraft: string
+  /** The latest todo-tool snapshot, captured from every `todo` tool.complete
+   *  REGARDLESS of HERMES_TUI_TOOL_OUTPUTS (the pinned TodoPanel is a live
+   *  tracker, not a tool body). undefined until the agent first calls `todo`. */
+  latestTodos: TodoSnapshot | undefined
   /** The open pager overlay (replaces the transcript while set); undefined when none. */
   pager: PagerState | undefined
   /** The open resume picker (replaces the composer while set); undefined when none. */
@@ -387,6 +419,32 @@ function onlyStrings(items: ReadonlyArray<unknown> | undefined): string[] {
   return (items ?? []).filter((s): s is string => typeof s === 'string')
 }
 
+function normalizeTodoStatus(s: unknown): TodoStatus {
+  if (s === 'completed' || s === 'in_progress' || s === 'cancelled') return s
+  return 'pending'
+}
+
+/** Parse a TodoSnapshot from a `todo` tool.complete payload — result.todos
+ *  first, else args.todos. Returns undefined when there's no usable list (so a
+ *  malformed call never clobbers a good prior snapshot). */
+export function todoSnapshotFrom(result: unknown, args: unknown): TodoSnapshot | undefined {
+  const fromObj = (o: unknown): unknown =>
+    o && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, unknown>)['todos'] : undefined
+  const rawList = fromObj(result) ?? fromObj(args)
+  if (!Array.isArray(rawList)) return undefined
+  const todos: TodoItem[] = []
+  for (const t of rawList) {
+    if (!t || typeof t !== 'object') continue
+    const o = t as Record<string, unknown>
+    const content = typeof o['content'] === 'string' ? o['content'] : ''
+    if (content) todos.push({ content, status: normalizeTodoStatus(o['status']) })
+  }
+  if (todos.length === 0) return undefined
+  const counts: TodoCounts = { total: todos.length, completed: 0, in_progress: 0, pending: 0, cancelled: 0 }
+  for (const t of todos) counts[t.status]++
+  return { todos, counts }
+}
+
 /** Build the typed Catalog from a decoded startup.catalog result (item 9). An
  *  absent `enabled` flag means on; nameless toolsets/categories are dropped and
  *  non-string tool/server names are filtered (defensive — wire arrays are loose). */
@@ -479,6 +537,8 @@ export function createSessionStore(options?: SessionStoreOptions) {
     dropped: 0,
     theme: DEFAULT_THEME,
     prompt: undefined,
+    composerDraft: '',
+    latestTodos: undefined,
     pager: undefined,
     sessionPicker: undefined,
     picker: undefined,
@@ -713,10 +773,28 @@ export function createSessionStore(options?: SessionStoreOptions) {
     setState('messages', [])
     setState('subagents', [])
     setState('dropped', 0)
+    // A fresh session has no plan — drop the pinned todo panel's snapshot.
+    setState('latestTodos', undefined)
     // Drop the dedup history too — a fresh transcript should re-process any id.
     applied.clear()
     // A chrome notice must not survive a transcript reset (new session context).
     clearNoticeState()
+    // /new and /clear start a fresh context: the status-bar usage gauges
+    // (ctx %, tokens, cost, compressions) must zero out. They can't clear via a
+    // later session.info because infoPatchFrom only MERGES present fields, so a
+    // fresh session that omits them would leave the stale numbers. Delete them
+    // here via produce (setState('info', fn) MERGES a returned partial, so an
+    // omit-by-spread would NOT remove the keys). Keep stable session identity.
+    setState(
+      'info',
+      produce(info => {
+        delete info.contextUsed
+        delete info.contextMax
+        delete info.contextPercent
+        delete info.costUsd
+        delete info.compressions
+      })
+    )
   }
 
   /** Open / close the agents dashboard overlay (/agents). The optional `agentId`
@@ -1089,6 +1167,15 @@ export function createSessionStore(options?: SessionStoreOptions) {
             }
           })
         )
+        // Todo panel (live tracker): capture the latest todo snapshot from EVERY
+        // `todo` tool.complete, REGARDLESS of HERMES_TUI_TOOL_OUTPUTS (the pinned
+        // panel is not a tool body). Set OUTSIDE the produce() above — it's a
+        // separate top-level slice, not part of the message tree. Keeps list
+        // order (= priority); never re-sorts.
+        if (name === 'todo') {
+          const snap = todoSnapshotFrom(event.payload['result'], event.payload['args'])
+          if (snap) setState('latestTodos', snap)
+        }
         break
       }
       // ── blocking prompts (spec §8 #6 — unhandled = the agent deadlocks) ──
@@ -1218,6 +1305,12 @@ export function createSessionStore(options?: SessionStoreOptions) {
     setState('prompt', undefined)
   }
 
+  /** Persist the composer's in-progress draft (survives composer unmount when a
+   *  blocking prompt replaces it). Cleared on submit. */
+  function setComposerDraft(text: string): void {
+    setState('composerDraft', text)
+  }
+
   // ── resume hydrate (opencode sync-v2): buffer live events while the snapshot
   // loads, then replace history + replay the buffer in order. Split into begin/
   // commit so the buffer can span an async `session.resume` RPC.
@@ -1234,6 +1327,10 @@ export function createSessionStore(options?: SessionStoreOptions) {
     // gateway re-emits on the next header parse — acceptable vs. cross-session
     // bleed + a leaked timer.
     clearNoticeState()
+    // …same reasoning for the pinned todo panel: a resumed/different session must
+    // not inherit the prior session's plan. The resumed session re-emits its own
+    // `todo` snapshot if it has one (mirrors clearTranscript's reset).
+    setState('latestTodos', undefined)
     // Slice to the cap BEFORE the first setState, not after. Yoga (WASM) layout
     // memory is grow-only, so even a TRANSIENT mount of an over-cap resume
     // snapshot would permanently ratchet the high-water mark — a set-then-trim
@@ -1313,7 +1410,8 @@ export function createSessionStore(options?: SessionStoreOptions) {
     beginBuffer,
     commitSnapshot,
     duplicate,
-    clearPrompt
+    clearPrompt,
+    setComposerDraft
   } as const
 }
 

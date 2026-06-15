@@ -30,12 +30,23 @@ import { GatewayService, type GatewayServiceShape } from '../boundary/gateway/Ga
 import { liveGatewayLayer } from '../boundary/gateway/liveGateway.ts'
 import { getLog } from '../boundary/log.ts'
 import { startMemlog } from '../boundary/memlog.ts'
+import { startMemoryMonitor } from '../boundary/memoryMonitor.ts'
 import { startProactiveGc } from '../boundary/proactiveGc.ts'
 import { registerVendoredParsers } from '../boundary/parsers.ts'
 import { acquireRenderer } from '../boundary/renderer.ts'
 import { makeAppLayer } from '../boundary/runtime.ts'
 import { nthAssistantResponse } from '../logic/copy.ts'
-import { envFlag, launchCwd } from '../logic/env.ts'
+import { performHeapdump } from '../logic/diagnostics.ts'
+import {
+  envFlag,
+  heapdumpOnStart,
+  launchCwd,
+  noConfirmDestructive,
+  resolveMouseEnabled,
+  startupImage,
+  startupPrompt,
+  STARTUP_IMAGE_DEFAULT_PROMPT
+} from '../logic/env.ts'
 import { createPromptHistory, dirHistoryPersister, loadDirHistory } from '../logic/history.ts'
 import { parseProcessList } from '../logic/backgroundActivity.ts'
 import { createPasteStore } from '../logic/pastes.ts'
@@ -74,6 +85,8 @@ export interface TuiInput {
   readonly cols: number
   /** Optional initial prompt submitted once the session is ready — the Phase-1 stand-in for the composer. */
   readonly initialPrompt?: string
+  /** Optional image PATH attached (image.attach) before the initial prompt — `hermes --tui --image <path>`. */
+  readonly initialImage?: string
   /** Resume a session instead of creating one: a session id, 'recent'/'last'
    *  (→ session.most_recent), or 'picker' (bare `--resume` — open the resume
    *  picker BEFORE any session.create; create stays lazy). */
@@ -156,7 +169,13 @@ const resumeInto = (gateway: GatewayServiceShape, store: SessionStore, sid: stri
  * forked fiber; the promise is STASHED in the slash seam so an early `/model`
  * awaits THIS request instead of doubling it).
  */
-const postSessionSetup = (gateway: GatewayServiceShape, store: SessionStore, sid: string, initialPrompt?: string) =>
+const postSessionSetup = (
+  gateway: GatewayServiceShape,
+  store: SessionStore,
+  sid: string,
+  initialPrompt?: string,
+  initialImage?: string
+) =>
   Effect.gen(function* () {
     const catalog = yield* gateway
       .request<unknown>('startup.catalog', { session_id: sid })
@@ -174,7 +193,22 @@ const postSessionSetup = (gateway: GatewayServiceShape, store: SessionStore, sid
       .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
     seedLearnedNames(catalogCommandItems(cmdCatalog))
 
-    const prompt = initialPrompt?.trim()
+    // Seeded image (`hermes --tui --image <path>`): attach BEFORE submitting, so
+    // the next prompt.submit picks it up — exact Ink parity (createGatewayEventHandler
+    // scheduleStartupPrompt: image.attach then submit; default prompt when image-only).
+    const image = initialImage?.trim()
+    if (image) {
+      yield* gateway.request('image.attach', { path: image, session_id: sid }).pipe(
+        Effect.catchCause(cause =>
+          Effect.sync(() => {
+            getLog().warn('bootstrap', 'startup image attach failed', { cause: String(cause) })
+            store.pushSystem(`startup image attach failed: ${String(cause)}`)
+          })
+        )
+      )
+    }
+
+    const prompt = initialPrompt?.trim() || (image ? STARTUP_IMAGE_DEFAULT_PROMPT : undefined)
     if (prompt) {
       store.pushUser(prompt)
       yield* gateway.request('prompt.submit', { session_id: sid, text: prompt })
@@ -220,7 +254,7 @@ const createFreshSession = (gateway: GatewayServiceShape, store: SessionStore, i
     writeActiveSession(sid) // record the new session for the launcher's exit epilogue (#5)
     store.setSessionId(sid)
     getLog().info('bootstrap', 'session created', { sid })
-    yield* postSessionSetup(gateway, store, sid, input.initialPrompt)
+    yield* postSessionSetup(gateway, store, sid, input.initialPrompt, input.initialImage)
   })
 
 /**
@@ -265,7 +299,7 @@ const bootstrapSession = (gateway: GatewayServiceShape, store: SessionStore, inp
         return
       }
       yield* resumeInto(gateway, store, sid, input.cols)
-      yield* postSessionSetup(gateway, store, sid, input.initialPrompt)
+      yield* postSessionSetup(gateway, store, sid, input.initialPrompt, input.initialImage)
       return
     }
 
@@ -426,6 +460,24 @@ export const run = Effect.fn('Tui.run')(function* (input: TuiInput) {
       // collects mid-reply. Scoped release like memlog.
       const proactiveGc = startProactiveGc(() => store.state.info.running === true)
       yield* Effect.addFinalizer(() => Effect.sync(proactiveGc.stop))
+      // Memory early-warning (#34095 parity) — surfaces a transcript system line
+      // when heap climbs abnormally fast below the OOM ceiling (the silent-death
+      // regime). ON by default: a KB user-facing safety heads-up, not a
+      // diagnostic dump. No auto heap-snapshot (memlog is the diagnosis path).
+      const stopMemoryMonitor = startMemoryMonitor(line => store.pushSystem(line))
+      yield* Effect.addFinalizer(() => Effect.sync(stopMemoryMonitor))
+      // HERMES_HEAPDUMP_ON_START (Ink parity): a deliberate baseline snapshot at
+      // boot. Bypasses the diagnostics master switch (you set it on purpose).
+      // Best-effort + synchronous (writeHeapSnapshot blocks V8) — a failure must
+      // never block launch.
+      if (heapdumpOnStart()) {
+        try {
+          const dump = performHeapdump()
+          store.pushSystem(`heap snapshot written: ${dump.path}`)
+        } catch (cause) {
+          getLog().warn('bootstrap', 'heapdump-on-start failed', { cause: String(cause) })
+        }
+      }
       doQuit = () => {
         if (!renderer.isDestroyed) renderer.destroy()
       }
@@ -542,7 +594,10 @@ export const run = Effect.fn('Tui.run')(function* (input: TuiInput) {
             return undefined
           }
         },
-        confirm: (message, onConfirm) => store.setConfirm(message, onConfirm),
+        // HERMES_TUI_NO_CONFIRM (Ink parity): skip the destructive-action confirm
+        // step and run the action immediately. Read per call so a wrapper that
+        // mutates env before launch sees the live value.
+        confirm: (message, onConfirm) => (noConfirmDestructive() ? onConfirm() : store.setConfirm(message, onConfirm)),
         copyResponse: n => {
           const text = nthAssistantResponse(store.state.messages, n)
           if (!text) return false
@@ -684,14 +739,19 @@ function streamHello(controller: FakeGatewayController): void {
 if (import.meta.main) {
   const fake = envFlag(process.env.HERMES_TUI_FAKE, false)
   const cols = process.stdout.columns || 80
-  const initialPrompt = process.env.HERMES_TUI_PROMPT?.trim() || process.argv.slice(2).join(' ').trim()
+  // `hermes --tui "prompt"` / `--image` seed: the launcher sets HERMES_TUI_QUERY
+  // (+ HERMES_TUI_IMAGE); we also honor HERMES_TUI_PROMPT (OpenTUI alias) and a
+  // bare argv tail (standalone dev). See logic/env.ts startupPrompt/startupImage.
+  const initialPrompt = startupPrompt()
+  const initialImage = startupImage()
   const resumeId = process.env.HERMES_TUI_RESUME?.trim()
-  // Mouse on by default (opencode parity: wheel-scroll the transcript, drag the
-  // scrollbar, click-to-expand tools, text-aware selection). HERMES_TUI_MOUSE=0 opts out.
-  const mouse = envFlag(process.env.HERMES_TUI_MOUSE, true)
+  // Mouse on by default. Defers to Ink's env surface (HERMES_TUI_MOUSE_TRACKING >
+  // HERMES_TUI_DISABLE_MOUSE > HERMES_TUI_MOUSE alias > default on). See env.ts.
+  const mouse = resolveMouseEnabled()
   const base = { mouse, fake, cols }
   const withPrompt = initialPrompt ? { ...base, initialPrompt } : base
-  const input: TuiInput = resumeId ? { ...withPrompt, resumeId } : withPrompt
+  const withImage = initialImage ? { ...withPrompt, initialImage } : withPrompt
+  const input: TuiInput = resumeId ? { ...withImage, resumeId } : withImage
 
   const onFatal = (error: unknown) => {
     getLog().error('entry', 'fatal', { error: String(error) })

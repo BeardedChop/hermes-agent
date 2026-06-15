@@ -36,6 +36,7 @@ import { SessionPicker, type SessionPickerOps } from './overlays/sessionPicker.t
 import { PromptOverlay } from './prompts/promptOverlay.tsx'
 import { SessionInfoProvider } from './sessionInfo.tsx'
 import { StatusBar } from './statusBar.tsx'
+import { TodoPanel } from './todoPanel.tsx'
 import { StatusLine } from './statusLine.tsx'
 import { useTheme } from './theme.tsx'
 import { Transcript } from './transcript.tsx'
@@ -143,6 +144,7 @@ export function App(props: AppProps) {
                   borderColor={theme().color.border}
                   style={{ flexShrink: 0, flexDirection: 'column' }}
                 >
+                  <TodoPanel snapshot={props.store.state.latestTodos} />
                   <NoticeBanner notice={props.store.state.notice} />
                   <StatusBar store={props.store} />
                   <Switch
@@ -159,6 +161,8 @@ export function App(props: AppProps) {
                         onFocusDown={() => trayApi?.focusTray() ?? false}
                         registerFocus={fn => (focusComposer = fn)}
                         onDoubleEsc={openPromptHistory}
+                        initialDraft={() => props.store.state.composerDraft}
+                        onDraftChange={text => props.store.setComposerDraft(text)}
                       />
                     }
                   >

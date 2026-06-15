@@ -1,21 +1,21 @@
 /**
- * Terminal chrome: OSC 0/2 window title + OSC 9/99/777 waiting-on-you
- * notifications. Layers:
- *   1. pure: title shaping, OSC sanitization, the three notification
- *      dialect sequences, the prompt-kind copy, the env kill-switch
- *      (logic/termChrome.ts).
- *   2. wiring: <TerminalChrome> with an injected fake seam over a real
+ * Terminal chrome: OSC 0/2 window title + native desktop notifications
+ * (renderer.triggerNotification). Layers:
+ *   1. pure: title shaping, OSC sanitization, the prompt-kind copy, the env
+ *      kill-switch (logic/termChrome.ts).
+ *   2. boundary: installTerminalChrome over a fake renderer — notify routes to
+ *      the native triggerNotification(message, title) with focus suppression.
+ *   3. wiring: <TerminalChrome> with an injected fake seam over a real
  *      store — the title tracks session.info, prompts and turn-completion
  *      edges notify exactly once, initial state stays silent.
  */
 import { createRoot } from 'solid-js'
 import { describe, expect, test } from 'vitest'
 
-import type { TerminalChromeSeam } from '../boundary/termChrome.ts'
+import { installTerminalChrome, type TerminalChromeSeam } from '../boundary/termChrome.ts'
 import { createSessionStore } from '../logic/store.ts'
 import {
   notifyEnabled,
-  notifySequences,
   promptNotification,
   sanitizeOscText,
   TURN_COMPLETE_NOTIFICATION,
@@ -54,21 +54,71 @@ describe('sanitizeOscText — escape-splice safety', () => {
   })
 })
 
-describe('notifySequences — the three dialects', () => {
-  test('emits OSC 9, kitty OSC 99, and OSC 777', () => {
-    const [osc9, osc99, osc777] = notifySequences({ title: 'Hermes', body: 'finished' })
-    expect(osc9).toBe(`${ESC}]9;Hermes: finished${BEL}`)
-    expect(osc99).toBe(`${ESC}]99;i=hermes;Hermes: finished${ESC}\\`)
-    expect(osc777).toBe(`${ESC}]777;notify;Hermes;finished${BEL}`)
+describe('installTerminalChrome — native triggerNotification transport', () => {
+  /** A minimal fake renderer matching the RendererSeam the boundary casts to.
+   *  Records triggerNotification calls and lets a test fire focus/blur. */
+  function fakeRenderer() {
+    const calls: Array<{ message: string; title: string | undefined }> = []
+    let focusCb: (() => void) | undefined
+    let blurCb: (() => void) | undefined
+    const renderer = {
+      isDestroyed: false,
+      setTerminalTitle: () => {},
+      writeOut: () => {},
+      triggerNotification: (message: string, title?: string) => {
+        calls.push({ message, title })
+        return true
+      },
+      on: (event: 'focus' | 'blur', cb: () => void) => {
+        if (event === 'focus') focusCb = cb
+        else blurCb = cb
+      },
+      once: () => {}
+    }
+    // installTerminalChrome takes a CliRenderer; the boundary only touches the
+    // shape above, so the cast is safe for this seam test.
+    return {
+      calls,
+      fireBlur: () => blurCb?.(),
+      fireFocus: () => focusCb?.(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      seam: installTerminalChrome(renderer as any)
+    }
+  }
+
+  test('notify calls native triggerNotification(message=body, title=heading)', () => {
+    const { calls, seam } = fakeRenderer()
+    seam.notify({ title: 'Hermes', body: 'finished — awaiting your input' })
+    expect(calls).toEqual([{ message: 'finished — awaiting your input', title: 'Hermes' }])
   })
 
-  test('semicolons cannot splice OSC 777 fields', () => {
-    const [, , osc777] = notifySequences({ title: 'a;b', body: 'c;d' })
-    expect(osc777).toBe(`${ESC}]777;notify;a,b;c,d${BEL}`)
+  test('body-less notification uses the title as the message', () => {
+    const { calls, seam } = fakeRenderer()
+    seam.notify({ title: 'Hermes' })
+    expect(calls).toEqual([{ message: 'Hermes', title: 'Hermes' }])
   })
 
-  test('an empty title produces nothing', () => {
-    expect(notifySequences({ title: '   ' })).toEqual([])
+  test('an empty title fires nothing', () => {
+    const { calls, seam } = fakeRenderer()
+    seam.notify({ title: '   ' })
+    expect(calls).toEqual([])
+  })
+
+  test('control chars in the body are sanitized before the native call', () => {
+    const { calls, seam } = fakeRenderer()
+    seam.notify({ title: 'Hermes', body: `evil${ESC}]0;pwned${BEL}done` })
+    expect(calls).toHaveLength(1)
+    expect(calls.at(0)?.message).toBe('evil ]0;pwned done')
+  })
+
+  test('focus suppression: silent once the terminal reports focus, resumes on blur', () => {
+    const { calls, fireBlur, fireFocus, seam } = fakeRenderer()
+    fireFocus() // terminal is focused → suppress
+    seam.notify({ title: 'Hermes', body: 'a' })
+    expect(calls).toHaveLength(0)
+    fireBlur() // unfocused → notify again
+    seam.notify({ title: 'Hermes', body: 'b' })
+    expect(calls).toEqual([{ message: 'b', title: 'Hermes' }])
   })
 })
 

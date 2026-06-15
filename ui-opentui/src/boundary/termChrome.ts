@@ -1,19 +1,28 @@
 /**
  * Terminal chrome seam — window title (OSC 0/2) + desktop notifications
- * (OSC 9/99/777) through the renderer's native output path.
+ * through the renderer's native primitives.
  *
  * Why the renderer and not process.stdout: the zig side owns the terminal —
- * `setTerminalTitle` is a native FFI call and `writeOut` serializes raw
- * control bytes with frame presentation (core itself uses it for OSC 111),
- * so chrome writes can never tear a frame.
+ * `setTerminalTitle` and `triggerNotification` are native FFI calls and
+ * `writeOut` serializes raw control bytes with frame presentation, so chrome
+ * writes can never tear a frame.
+ *
+ * Notifications go through the native `renderer.triggerNotification(message,
+ * title)` (zig `lib.triggerNotification`), NOT a hand-rolled OSC 9/99/777 spray.
+ * The zig side does what raw OSC can't: authoritative protocol detection
+ * (query > heuristic) so it picks the ONE protocol the terminal speaks, **tmux
+ * DCS passthrough wrapping** (raw OSC is silently eaten by tmux), and Zellij
+ * OSC-99 enforcement. It returns `false` when no protocol was detected.
  *
  * Focus suppression: core parses mode-1004 focus reports (`ESC[I`/`ESC[O`)
  * and re-emits them as renderer `focus`/`blur` events — notifications are
  * skipped while the terminal reports focused (you're already looking at it).
- * Terminals that never report focus leave the state at the assumed-focused
- * initial value… which would swallow every notification, so the FIRST blur
- * is what arms suppression: until a blur arrives we treat focus as unknown
- * and notify unconditionally (worst case: a redundant ping while focused).
+ * Native `triggerNotification` does NOT do focus suppression, so it stays our
+ * policy here. Terminals that never report focus leave the state at the
+ * assumed-focused initial value… which would swallow every notification, so
+ * the FIRST blur is what arms suppression: until a blur arrives we treat focus
+ * as unknown and notify unconditionally (worst case: a redundant ping while
+ * focused).
  *
  * Everything here is total — chrome must never throw into the render loop
  * or a teardown path.
@@ -23,7 +32,7 @@ import type { CliRenderer } from '@opentui/core'
 import type { TermNotification } from '../logic/termChrome.ts'
 import {
   notifyEnabled,
-  notifySequences,
+  sanitizeOscText,
   TITLE_STACK_RESTORE,
   TITLE_STACK_SAVE,
   windowTitleFor
@@ -41,6 +50,8 @@ export interface TerminalChromeSeam {
 /** The renderer surface the seam writes through (runtime-verified shapes). */
 interface RendererSeam {
   setTerminalTitle(title: string): void
+  /** Native desktop notification (protocol detection + tmux/Zellij wrapping). */
+  triggerNotification(message: string, title?: string): boolean
   writeOut(chunk: string): void
   on(event: 'focus' | 'blur', listener: () => void): unknown
   once(event: 'destroy', listener: () => void): unknown
@@ -85,7 +96,17 @@ export function installTerminalChrome(renderer: CliRenderer): TerminalChromeSeam
     },
     notify: notification => {
       if (!notificationsOn || focused === true) return
-      for (const sequence of notifySequences(notification)) writeRaw(seam, sequence)
+      // Map our {title:'Hermes', body:'finished — …'} → native (message, title):
+      // native API takes the BODY as the message and the heading as the title.
+      const title = sanitizeOscText(notification.title)
+      const body = sanitizeOscText(notification.body ?? '')
+      if (!title) return
+      const message = body || title
+      try {
+        if (!seam.isDestroyed) seam.triggerNotification(message, title)
+      } catch (cause) {
+        getLog().warn('chrome', 'triggerNotification failed', { cause: String(cause) })
+      }
     }
   }
 }

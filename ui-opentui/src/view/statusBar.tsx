@@ -266,6 +266,16 @@ export function StatusBar(props: { store: SessionStore }) {
     const n = props.store.state.subagents.filter(isTrayAgent).length
     return segs().agents && n > 0 ? `⚡ ${n}` : ''
   })
+  // `☑ done/total` — the at-a-glance todo signal. The full live list is the
+  // pinned TodoPanel above the composer; this chip persists even when the panel
+  // auto-hides (no active work), so progress is never lost from view. It's tiny
+  // (~6 cols) so it shows at ANY width (unlike the agents chip) — the chip is
+  // the narrow-terminal fallback for the panel. Cleared when no snapshot exists.
+  const todoText = createMemo(() => {
+    const snap = props.store.state.latestTodos
+    if (!snap || snap.counts.total === 0) return ''
+    return `☑ ${snap.counts.completed}/${snap.counts.total}`
+  })
 
   // The cwd flows LAST on the same line (not right-pinned): its budget is the
   // row width minus every segment before it; it tail-truncates into that, and
@@ -273,7 +283,17 @@ export function StatusBar(props: { store: SessionStore }) {
   const leftLen = createMemo(() => {
     let len = 1 // dot
     if (model()) len += 1 + model().length + effort().length
-    for (const seg of [agentsText(), ctxText(), costText(), upText(), cmpText(), profileText(), bgText(), mcpText()]) {
+    for (const seg of [
+      agentsText(),
+      todoText(),
+      ctxText(),
+      costText(),
+      upText(),
+      cmpText(),
+      profileText(),
+      bgText(),
+      mcpText()
+    ]) {
       if (seg) len += SEP.length + seg.length
     }
     return len
@@ -331,6 +351,7 @@ export function StatusBar(props: { store: SessionStore }) {
             <span style={{ fg: theme().color.muted }}>{effort()}</span>
           </Show>
           <Seg text={agentsText()} fg={theme().color.accent} />
+          <Seg text={todoText()} fg={theme().color.statusGood} />
           <Show when={ctxText()}>
             <span style={{ fg: theme().color.border }}>{SEP}</span>
             <span style={{ fg: theme().color.muted }}>{'ctx: '}</span>
