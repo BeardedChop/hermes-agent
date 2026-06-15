@@ -9,6 +9,7 @@ import { TERMUX_TUI_MODE } from './config/env.js'
 import { GatewayClient } from './gatewayClient.js'
 import { setupGracefulExit } from './lib/gracefulExit.js'
 import { formatBytes, type HeapDumpResult, performHeapDump } from './lib/memory.js'
+import { startMemlog } from './lib/memlog.js'
 import { type MemorySnapshot, startMemoryMonitor } from './lib/memoryMonitor.js'
 import { openExternalUrl } from './lib/openExternalUrl.js'
 import { recordParentLifecycle } from './lib/parentLog.js'
@@ -108,7 +109,14 @@ if (process.env.HERMES_HEAPDUMP_ON_START === '1') {
   void performHeapDump('manual')
 }
 
+// Fleet memory self-sampling (HERMES_TUI_MEMLOG / diagnostics master switch).
+// Writes a 1Hz rss/heap/external NDJSON trace to ~/.hermes/logs/memwatch/ in
+// the SAME format OpenTUI emits, so one memwatch-report.mjs aggregates both
+// engines. No-op unless enabled. Unref'd interval — never keeps us alive.
+const stopMemlog = startMemlog()
+
 process.on('beforeExit', () => stopMemoryMonitor())
+process.on('beforeExit', () => stopMemlog())
 
 const [ink, { App }, { logFrameEvent }, { trackFrame }] = await Promise.all([
   import('@hermes/ink'),

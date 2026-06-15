@@ -16,9 +16,14 @@ classified by who should ever touch it. The design rule shipped with this doc:
 | var | default | effect |
 |---|---|---|
 | `HERMES_TUI_ENGINE` | auto (`opentui` if Node≥26.3 + built, else `ink`) | Engine pick; also `display.tui_engine` in config.yaml. |
-| `HERMES_TUI_MOUSE` | on (launcher sets it) | Mouse support (wheel scroll, selection, click-to-expand). **Glitch verdict 2026-06-12: leave as-is — always on, no realistic reason to disable; treat as plumbing, don't document it user-facing.** |
+| `HERMES_TUI_MOUSE` / `HERMES_TUI_MOUSE_TRACKING` / `HERMES_TUI_DISABLE_MOUSE` | on | Mouse support (wheel scroll, selection, click-to-expand). **Defers to Ink's env surface (`logic/env.ts` `resolveMouseEnabled`):** precedence is `HERMES_TUI_MOUSE_TRACKING` (toggle, force knob) > `HERMES_TUI_DISABLE_MOUSE=1` (legacy kill switch) > `HERMES_TUI_MOUSE` (OpenTUI-native alias, kept — also what the launcher sets) > default on. OpenTUI's renderer mouse is a single boolean, so Ink's granular off\|wheel\|buttons\|all collapses to on/off (the granular mode lives in `display.mouse_tracking` config). |
+| `HERMES_TUI_SCROLL_SPEED` (alias `CLAUDE_CODE_SCROLL_SPEED`) | native | Wheel-scroll speed multiplier (Ink parity). UNSET → OpenTUI's native scroll acceleration (untouched). A positive value (clamped to (0,20]) installs a constant-multiplier `ScrollAcceleration` on the transcript scrollbox (`view/transcript.tsx`). |
+| `HERMES_TUI_NO_CONFIRM` | off | Skip the destructive-action confirm step (`/clear`, `/new`) and run immediately (Ink parity, `NO_CONFIRM_DESTRUCTIVE`). Wired at the `confirm` seam (`entry/main.tsx`). |
 | `HERMES_TUI_MAX_MESSAGES` | ceiling | Scrollback rows kept in the TUI. Can LOWER the ceiling, never raise: 3000 with windowing, 1000 with windowing off (handle-table safety). |
 | `HERMES_TUI_TOOL_OUTPUT_LINES` | unlimited | Cap expanded tool-output lines (set a number to restore a cap). |
+| `HERMES_TUI_TOOL_OUTPUTS` | **on** | Keep rich tool-call OUTPUTS (full result body + raw result/args dicts). `=off` drops both the RENDER and the STORE of those bodies (Ink parity: only a one-line context preview + name/duration/error/diff survive) — the memory lever for the OpenTUI-vs-Ink retention asymmetry, and what the bench launches OpenTUI with for the fair engine-overhead comparison (W3). Diffs (file-edit) are KEPT either way. |
+| `HERMES_TUI_HEAP_MB` | cgroup-aware (default 8192) | V8 `--max-old-space-size` (MB) for BOTH engines. Highest precedence (then `display.tui_heap_mb` config, then the cgroup-75% fallback). Set it LOW for a low-mem session (still cgroup-clamped on top so it never exceeds the container); raise it to lift the ceiling. The low-mem opt-in signal that also arms `HERMES_TUI_PROACTIVE_GC` (W1). |
+| `HERMES_TUI_PROACTIVE_GC` | = low-`HERMES_TUI_HEAP_MB` (≤4096) | Idle-gated `global.gc()` for the low-mem path. Defaults ON only when a low heap cap is set (so the knobs compose); `=on`/`=off` forces it. Needs `--expose-gc` (the OpenTUI argv now carries it). Never runs mid-stream; tightens cadence above 400MB RSS but stays idle-gated. OpenTUI-only — Ink never GCs proactively (W2). |
 | `HERMES_TUI_COMPOSER_ROWS` | default rows | Composer height. |
 
 ## 3. Escape hatches & tuning (dev-facing, individually settable)
@@ -30,6 +35,8 @@ classified by who should ever touch it. The design rule shipped with this doc:
 | `HERMES_TUI_WINDOW_STATS` | = `HERMES_TUI_DIAGNOSTICS` | Exposes live/peak mounted-row counters (`globalThis.__hermesTuiWindowStats`) for tui-bench's live-attach reads. |
 | `HERMES_TUI_MEMLOG` | = `HERMES_TUI_DIAGNOSTICS` | In-process 1Hz memory self-sampling (`boundary/memlog.ts`) → `~/.hermes/logs/memwatch/<boot>-<pid>.jsonl` (rss/heap/external + mounted rows; 14-day retention). Fleet view: `node memwatch-report.mjs` from the tui-bench repo (`github.com/NousResearch/tui-bench`). The "monitor all my sessions" answer: one `export HERMES_TUI_DIAGNOSTICS=1` in your shell rc covers every session. |
 | `HERMES_TUI_LOG_LEVEL` / `HERMES_TUI_LOG_FILE` | engine defaults | Logging verbosity/destination (`/logs` reads the ring buffer regardless). Deliberately independent of the master switch — support often wants logs without the full diag surface. |
+| `HERMES_HEAPDUMP_ON_START` | off | Write one V8 heap snapshot at boot (Ink parity). A deliberate baseline-capture escape hatch that BYPASSES the diagnostics master switch; lands at `$HERMES_HOME/logs/opentui-heap-<ts>.heapsnapshot` and echoes the path as a system line (`entry/main.tsx`). |
+| `HERMES_TUI_NOTIFY` | on | Desktop-notification kill switch (`=0`/`false`/`off` silences the "waiting on you" pings). The ping itself goes through the renderer's native `triggerNotification` (protocol detection + tmux/Zellij wrapping); the window title is not gated by this. |
 
 ## 4. Internal plumbing (set by the launcher/tui-bench/tests — humans never set these)
 
@@ -37,9 +44,25 @@ classified by who should ever touch it. The design rule shipped with this doc:
 |---|---|---|
 | `HERMES_PYTHON`, `HERMES_PYTHON_SRC_ROOT`, `HERMES_CWD` | launcher / bench | Which gateway python + repo root + cwd the TUI spawns against (the bench's fake-gateway seam). |
 | `HERMES_TUI_ACTIVE_SESSION_FILE` | launcher/bench | Session handoff file. |
-| `HERMES_TUI_RESUME`, `HERMES_TUI_PROMPT`, `HERMES_TUI_FAKE` | launcher/tests | Resume-at-boot, seeded prompt, fake-mode. |
+| `HERMES_TUI_RESUME`, `HERMES_TUI_QUERY`, `HERMES_TUI_PROMPT`, `HERMES_TUI_IMAGE`, `HERMES_TUI_FAKE` | launcher/tests | Resume-at-boot; seeded prompt (`--tui "prompt"`: launcher sets `HERMES_TUI_QUERY`, the engine reads QUERY > the `HERMES_TUI_PROMPT` alias > a bare argv tail — `logic/env.ts` `startupPrompt`); seeded image PATH (`--image`: `HERMES_TUI_IMAGE`, `image.attach`ed before the prompt — `startupImage`, attach in `postSessionSetup`); fake-mode. |
+| `HERMES_AUTO_HEAPDUMP*` (`_COOLDOWN_MS`/`_MAX_BYTES`), `HERMES_HEAPDUMP_DIR`, `HERMES_HEAPDUMP_MAX_BYTES` | — | **NOT read by the OpenTUI engine (deliberate).** The engine ports Ink's #34095 silent-death early-WARNING (a transcript system line, `boundary/memoryMonitor.ts`) but NOT the auto heap-SNAPSHOT capture — the always-on memlog NDJSON trace is the diagnosis path, and its rss-vs-heap divergence is the better diagnostic for the native-RSS leak class (#15141) a V8 snapshot captures poorly. So the #41948 disk-fill safety set (gate/cooldown/byte-cap/dir) has no consumer here. `HERMES_HEAPDUMP_ON_START` (manual one-shot, §3) is the only heapdump knob the engine honors. |
 | `HERMES_TUI_RPC_TIMEOUT_MS`, `HERMES_TUI_STARTUP_TIMEOUT_MS` | tests/CI | Protocol timeouts. |
 | (`ui-tui` only) `HERMES_TUI_MEMSAMPLE_FD/MS` | bench | Ink fd-3 node sampler. |
+
+## 5. Ink flags NOT ported — handled natively or out of scope
+
+These exist on the legacy Ink TUI (`ui-tui/`) and are deliberately **not** read
+by the OpenTUI engine. Documented so a missing flag reads as a decision, not a gap.
+
+| Ink flag | why not ported |
+|---|---|
+| `HERMES_TUI_TRUECOLOR` | OpenTUI core does COLORTERM/truecolor detection natively — the Ink force-truecolor hack is a fork workaround we shed. |
+| `HERMES_TUI_FORCE_OSC52` | OpenTUI core owns OSC52 clipboard as a primitive; no fallback hint needed. |
+| `HERMES_TUI_INLINE` / `HERMES_TUI_TERMUX_MODE` / `HERMES_TUI_TERMUX_FAST_ECHO` | Termux/primary-buffer accommodations. OpenTUI's native FFI floor (Node ≥26.3 + `--experimental-ffi`) is absent on Termux, so those sessions stay on **Ink** — these are correctly N/A for the OpenTUI engine. |
+| `HERMES_TUI_FPS` | Ink FPS overlay; the OpenTUI equivalent is the diag/window-stats surface (`HERMES_TUI_WINDOW_STATS`). Not parity-critical. |
+| `HERMES_DEV_CREDITS` / `HERMES_DEV_PERF*` | Dev-only throwaway scaffolding (live-spend readout, perf logging) — not user parity. |
+| `HERMES_BIN` / `HERMES_TUI_GATEWAY_URL` / `HERMES_TUI_SIDECAR_URL` | External-CLI / remote-gateway-URL overrides. OpenTUI spawns its gateway via the Effect boundary (`liveGateway.ts`) and does not shell out to `hermes` or take an external gateway URL. |
+| `HERMES_VOICE` | Voice mode is tracked on the OpenTUI parity backlog separately, not here. |
 
 ## How the pieces compose (the support script)
 
