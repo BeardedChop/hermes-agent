@@ -58,15 +58,16 @@ export type FetchJSON = <T = unknown>(
  * binary/blob downloads). Same auth handling as ``fetchJSON`` but returns
  * the raw ``Response``, does not parse, does not throw on non-2xx, and does
  * not run the 401 redirect. Plugins MUST use this (or ``fetchJSON``) instead
- * of calling ``fetch`` with a hand-read ``window.__HERMES_SESSION_TOKEN__``.
+ * of calling ``fetch`` directly so dashboard auth (gated cookie / loopback)
+ * is handled for them.
  */
 export type AuthedFetch = (url: string, init?: RequestInit) => Promise<Response>;
 
 /**
  * Build an absolute ``ws(s)://`` URL for a dashboard WebSocket endpoint with
  * the correct auth query param for the active mode (single-use ``ticket`` in
- * gated OAuth mode, ``token`` in loopback). Plugins MUST use this for any
- * WebSocket instead of hand-assembling the URL + reading the session token.
+ * gated OAuth mode, no auth param in loopback). Plugins MUST use this for any
+ * WebSocket instead of hand-assembling the URL.
  */
 export type BuildWsUrl = (
   path: string,

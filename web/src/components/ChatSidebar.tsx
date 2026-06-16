@@ -184,7 +184,8 @@ export function ChatSidebar({ channel, profile, className }: ChatSidebarProps) {
     if (!channel) {
       return;
     }
-    // In loopback mode the legacy ?token=<session> path is fine; in gated
+    // In loopback mode the WS needs no auth param (the server accepts
+    // loopback connections on the peer-IP + Host/Origin guard); in gated
     // mode we have to mint a single-use ticket from the cookie. The IIFE
     // keeps the outer effect synchronous so its ``return cleanup`` stays
     // at the top level; the local ``ws`` is hoisted to a closed-over
@@ -193,11 +194,12 @@ export function ChatSidebar({ channel, profile, className }: ChatSidebarProps) {
     let ws: WebSocket | null = null;
     void (async () => {
       const [authName, authValue] = await buildWsAuthParam();
-      if (!authValue || unmounting) {
+      if (unmounting) {
         return;
       }
       const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const qs = new URLSearchParams({ [authName]: authValue, channel });
+      const qs = new URLSearchParams({ channel });
+      if (authName) qs.set(authName, authValue);
       ws = new WebSocket(
         `${proto}//${window.location.host}${HERMES_BASE_PATH}/api/events?${qs.toString()}`,
       );

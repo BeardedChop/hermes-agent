@@ -109,9 +109,10 @@ export class GatewayClient {
     if (this._state === "open" || this._state === "connecting") return;
     this.setState("connecting");
 
-    // Gated mode: legacy ``?token=`` is rejected by ``_ws_auth_ok``; the
-    // SPA must fetch a single-use ticket via /api/auth/ws-ticket instead.
-    // Explicit ``token`` overrides the gate check (test-only path).
+    // Gated mode: the SPA must fetch a single-use ticket via
+    // /api/auth/ws-ticket; loopback mode needs no auth param (the server
+    // accepts loopback WS on the peer-IP + Host/Origin guard). An explicit
+    // ``token`` overrides both (test-only path).
     let authParamName: string;
     let authParamValue: string;
     if (token) {
@@ -122,19 +123,16 @@ export class GatewayClient {
       authParamName = "ticket";
       authParamValue = ticket;
     } else {
-      authParamName = "token";
-      authParamValue = window.__HERMES_SESSION_TOKEN__ ?? "";
-      if (!authParamValue) {
-        this.setState("error");
-        throw new Error(
-          "Session token not available — page must be served by the Hermes dashboard",
-        );
-      }
+      authParamName = "";
+      authParamValue = "";
     }
 
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+    const authQuery = authParamName
+      ? `?${authParamName}=${encodeURIComponent(authParamValue)}`
+      : "";
     const ws = new WebSocket(
-      `${scheme}//${location.host}${HERMES_BASE_PATH}/api/ws?${authParamName}=${encodeURIComponent(authParamValue)}`,
+      `${scheme}//${location.host}${HERMES_BASE_PATH}/api/ws${authQuery}`,
     );
     this.ws = ws;
 
@@ -247,7 +245,6 @@ export class GatewayClient {
 
 declare global {
   interface Window {
-    __HERMES_SESSION_TOKEN__?: string;
     __HERMES_AUTH_REQUIRED__?: boolean;
   }
 }

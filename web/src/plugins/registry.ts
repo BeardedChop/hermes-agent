@@ -128,12 +128,12 @@ export function exposePluginSDK() {
     // Raw fetchJSON for plugin-specific JSON endpoints
     fetchJSON,
     // Authenticated fetch for non-JSON endpoints (uploads / blob downloads).
-    // Handles loopback-token vs gated-cookie auth so plugins never read
-    // window.__HERMES_SESSION_TOKEN__ directly.
+    // Handles gated-cookie auth (and needs no credential on loopback) so
+    // plugins never have to manage dashboard auth themselves.
     authedFetch,
     // Build a ws(s):// URL with the correct auth param for the active mode
-    // (single-use ticket in gated mode, token in loopback). Use this for any
-    // plugin WebSocket instead of hand-assembling the URL.
+    // (single-use ticket in gated mode, no auth param in loopback). Use this
+    // for any plugin WebSocket instead of hand-assembling the URL.
     buildWsUrl,
     // Lower-level: resolve just the [authParamName, authParamValue] pair, for
     // plugins that need to build the WS URL themselves.

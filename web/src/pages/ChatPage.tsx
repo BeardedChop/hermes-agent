@@ -9,7 +9,7 @@
  *              │ onResize    terminal resize → `\x1b[RESIZE:cols;rows]`   .
  *              │ write(data) PTY output bytes → VT100 parser              .
  *              ▼                                                          .
- *     WebSocket /api/pty?token=<session>                                  .
+ *     WebSocket /api/pty?ticket=<minted> (gated; none on loopback)         .
  *          ▼                                                              .
  *     FastAPI pty_ws  (hermes_cli/web_server.py)                          .
  *          ▼                                                              .
@@ -46,10 +46,13 @@ function buildWsUrl(
   profile: string,
 ): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  // ``authParam`` is ``["token", <session>]`` in loopback mode and
-  // ``["ticket", <minted>]`` in gated mode. The server-side helper
-  // ``_ws_auth_ok`` picks whichever shape matches the current gate state.
-  const qs = new URLSearchParams({ [authParam[0]]: authParam[1], channel });
+  // ``authParam`` is ``["ticket", <minted>]`` in gated mode and an empty
+  // pair ``["", ""]`` in loopback mode (the server accepts loopback WS with
+  // no auth param — peer-IP + Host/Origin guard is the boundary). The
+  // server-side helper ``_ws_auth_ok`` picks whichever shape matches the
+  // current gate state.
+  const qs = new URLSearchParams({ channel });
+  if (authParam[0]) qs.set(authParam[0], authParam[1]);
   if (resume) qs.set("resume", resume);
   // Profile-scoped chat: the PTY child gets HERMES_HOME pointed at the
   // selected profile, so the conversation runs with that profile's model,
@@ -125,18 +128,11 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   // collapses the host's box, so ResizeObserver never fires on return).
   const syncMetricsRef = useRef<(() => void) | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
-  // Lazy-init: the missing-token check happens at construction so the effect
-  // body doesn't have to setState (React 19's set-state-in-effect rule).
-  // In gated (OAuth) mode the server intentionally omits the session token —
-  // the SPA authenticates the WS via a single-use ticket (buildWsAuthParam),
-  // so a missing token there is expected, not an error.
-  const [banner, setBanner] = useState<string | null>(() =>
-    typeof window !== "undefined" &&
-    !window.__HERMES_SESSION_TOKEN__ &&
-    !window.__HERMES_AUTH_REQUIRED__
-      ? "Session token unavailable. Open this page through `hermes dashboard`, not directly."
-      : null,
-  );
+  // Connection status banner — populated by the WS ``onclose`` handler when
+  // a connection is refused (auth failure, host/origin mismatch, etc.).
+  // There's no client-side credential to be "missing" anymore: loopback
+  // needs none and gated mints a WS ticket on demand (buildWsAuthParam).
+  const [banner, setBanner] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
   const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Raw state for the mobile side-sheet + a derived value that force-
@@ -296,15 +292,9 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     const host = hostRef.current;
     if (!host) return;
 
-    const token = window.__HERMES_SESSION_TOKEN__;
-    const gated = !!window.__HERMES_AUTH_REQUIRED__;
-    // Banner already initialised above; just bail before wiring xterm/WS.
-    // In gated mode the token is absent by design — buildWsAuthParam() mints
-    // a WS ticket instead, so don't bail; let the effect reach that path.
-    if (!token && !gated) {
-      return;
-    }
-
+    // No client-side credential gate here: loopback WS needs no auth param
+    // and gated mode mints a single-use ticket in buildWsAuthParam(). Wire
+    // up xterm/WS unconditionally.
     const tierW0 = terminalTierWidthPx(host);
     const term = new Terminal({
       allowProposedApi: true,
@@ -941,7 +931,6 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
 
 declare global {
   interface Window {
-    __HERMES_SESSION_TOKEN__?: string;
     __HERMES_AUTH_REQUIRED__?: boolean;
   }
 }

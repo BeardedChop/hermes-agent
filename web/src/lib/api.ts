@@ -19,25 +19,14 @@ const BASE = HERMES_BASE_PATH;
 
 import type { DashboardTheme } from "@/themes/types";
 
-// Ephemeral session token for protected endpoints.
-// Injected into index.html by the server — never fetched via API.
 declare global {
   interface Window {
-    __HERMES_SESSION_TOKEN__?: string;
     __HERMES_BASE_PATH__?: string;
     /** Server-injected flag: ``true`` when the dashboard's OAuth gate is
      * engaged (public bind, no ``--insecure``). Toggles the SPA's
-     * WS-upgrade path from legacy ``?token=`` to single-use ``?ticket=``
-     * fetched via :func:`getWsTicket`. */
+     * WS-upgrade path to single-use ``?ticket=`` fetched via
+     * :func:`getWsTicket`; loopback connects with no auth param. */
     __HERMES_AUTH_REQUIRED__?: boolean;
-  }
-}
-let _sessionToken: string | null = null;
-const SESSION_HEADER = "X-Hermes-Session-Token";
-
-function setSessionHeader(headers: Headers, token: string): void {
-  if (!headers.has(SESSION_HEADER)) {
-    headers.set(SESSION_HEADER, token);
   }
 }
 
@@ -92,19 +81,13 @@ export async function fetchJSON<T>(
   options?: FetchJSONOptions,
 ): Promise<T> {
   url = withManagementProfile(url);
-  // Inject the session token into all /api/ requests.
   const headers = new Headers(init?.headers);
-  const token = window.__HERMES_SESSION_TOKEN__;
-  if (token) {
-    setSessionHeader(headers, token);
-  }
   const res = await fetch(`${BASE}${url}`, {
     ...init,
     headers,
     // ``credentials: 'include'`` so the cookie-auth path (gated mode) works
     // for any fetch routed through here. Loopback mode is unaffected — the
-    // server doesn't read cookies and the legacy session-token header is
-    // already attached above.
+    // server doesn't read cookies and enforces no identity gate.
     credentials: init?.credentials ?? "include",
   });
   if (res.status === 401) {
@@ -141,43 +124,6 @@ export async function fetchJSON<T>(
       // Never resolve — the page is about to unload.
       return new Promise<T>(() => {});
     }
-    // Loopback mode: ``_SESSION_TOKEN`` rotates on every server restart
-    // (``hermes update``, ``hermes gateway restart``, etc.). A tab kept
-    // open across the restart holds the OLD token in
-    // ``window.__HERMES_SESSION_TOKEN__`` from the previous HTML render,
-    // so every fetch returns 401. The HTML is served ``Cache-Control:
-    // no-store`` so a reload picks up the freshly-injected token. Trigger
-    // that reload once on the first stale-token 401 — gated mode is
-    // handled above, so reaching here in gated mode means a real
-    // middleware failure that should not reload-loop.
-    if (!window.__HERMES_AUTH_REQUIRED__ && !options?.allowUnauthorized) {
-      let alreadyReloaded = false;
-      try {
-        alreadyReloaded =
-          sessionStorage.getItem("hermes.tokenReloadAttempted") === "1";
-      } catch {
-        /* SSR / privacy mode — fall through to throw */
-      }
-      if (!alreadyReloaded) {
-        try {
-          sessionStorage.setItem("hermes.tokenReloadAttempted", "1");
-        } catch {
-          /* SSR / privacy mode — best effort */
-        }
-        window.location.reload();
-        return new Promise<T>(() => {});
-      }
-    }
-  }
-  if (res.ok) {
-    // Clear the stale-token reload guard: a successful 2xx proves the
-    // current ``window.__HERMES_SESSION_TOKEN__`` is valid, so the next
-    // 401 — if any — should be allowed to trigger its own reload cycle.
-    try {
-      sessionStorage.removeItem("hermes.tokenReloadAttempted");
-    } catch {
-      /* SSR / privacy mode — ignore */
-    }
   }
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
@@ -189,16 +135,6 @@ export async function fetchJSON<T>(
 /** Encode a plugin registry key for URL paths (preserves `/` segment separators). */
 function pluginPath(name: string): string {
   return name.split("/").map(encodeURIComponent).join("/");
-}
-
-async function getSessionToken(): Promise<string> {
-  if (_sessionToken) return _sessionToken;
-  const injected = window.__HERMES_SESSION_TOKEN__;
-  if (injected) {
-    _sessionToken = injected;
-    return _sessionToken;
-  }
-  throw new Error("Session token not available — page must be served by the Hermes dashboard server");
 }
 
 /**
@@ -227,15 +163,15 @@ export async function getWsTicket(): Promise<{ ticket: string; ttl_seconds: numb
 /**
  * Resolve the auth query-param pair (``[name, value]``) for a WebSocket
  * connect. In gated mode mints a fresh single-use ticket; in loopback
- * mode returns the injected session token.
+ * mode returns an empty pair (the server accepts loopback WS with no auth
+ * param — peer-IP + Host/Origin guard is the boundary).
  */
 export async function buildWsAuthParam(): Promise<[string, string]> {
   if (window.__HERMES_AUTH_REQUIRED__) {
     const { ticket } = await getWsTicket();
     return ["ticket", ticket];
   }
-  const token = window.__HERMES_SESSION_TOKEN__ ?? "";
-  return ["token", token];
+  return ["", ""];
 }
 
 /**
@@ -244,10 +180,11 @@ export async function buildWsAuthParam(): Promise<[string, string]> {
  * Mirrors ``fetchJSON``'s auth handling but returns the raw ``Response`` so
  * the caller can read ``.blob()`` / ``.formData()`` / stream it.
  *
- * Auth, in both modes, exactly as ``fetchJSON`` does it:
- *  - loopback / ``--insecure``: attach the ``X-Hermes-Session-Token`` header.
- *  - gated OAuth: no token header (it's absent by design); the
- *    ``hermes_session_at`` cookie rides along via ``credentials: 'include'``.
+ * Auth, in both modes:
+ *  - loopback / ``--insecure``: no credential needed; the server enforces
+ *    no identity gate on a loopback bind.
+ *  - gated OAuth: the ``hermes_session_at`` cookie rides along via
+ *    ``credentials: 'include'``.
  *
  * Unlike ``fetchJSON`` this does NOT parse the body, does NOT throw on
  * non-2xx (the caller decides — a 404 on a download is meaningful), and
@@ -260,10 +197,6 @@ export async function authedFetch(
   init?: RequestInit,
 ): Promise<Response> {
   const headers = new Headers(init?.headers);
-  const token = window.__HERMES_SESSION_TOKEN__;
-  if (token) {
-    setSessionHeader(headers, token);
-  }
   return fetch(`${BASE}${url}`, {
     ...init,
     headers,
@@ -274,10 +207,9 @@ export async function authedFetch(
 /**
  * Build an absolute ``ws(s)://`` URL for a dashboard WebSocket endpoint,
  * with the correct auth query param appended for the active mode (fresh
- * single-use ``ticket`` in gated mode, ``token`` in loopback). Plugins and
- * the SPA should use this instead of hand-assembling a WS URL + reading
- * ``window.__HERMES_SESSION_TOKEN__`` directly, so the gated-mode ticket
- * path can never be forgotten.
+ * single-use ``ticket`` in gated mode, no auth param in loopback). Plugins
+ * and the SPA should use this instead of hand-assembling a WS URL, so the
+ * gated-mode ticket path can never be forgotten.
  *
  * ``path`` is the dashboard-relative path (e.g.
  * ``"/api/plugins/kanban/events"``); the base-path prefix and host are
@@ -291,8 +223,11 @@ export async function buildWsUrl(
   const [authName, authValue] = await buildWsAuthParam();
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const qs = new URLSearchParams(params ?? {});
-  qs.set(authName, authValue);
-  return `${proto}//${window.location.host}${BASE}${path}?${qs}`;
+  if (authName) {
+    qs.set(authName, authValue);
+  }
+  const query = qs.toString();
+  return `${proto}//${window.location.host}${BASE}${path}${query ? `?${query}` : ""}`;
 }
 
 /** Build a ``?profile=<name>`` query suffix, or "" when unset.
@@ -319,13 +254,8 @@ export const api = {
    * AuthWidget component swallows 401s from this call: if the gate isn't
    * engaged, /api/auth/me returns 401 and the widget renders nothing.
    *
-   * ``allowUnauthorized`` is load-bearing: in loopback mode this endpoint
-   * 401s by design, and fetchJSON's default loopback behaviour treats a
-   * 401 as a rotated session token and full-page-reloads to pick up a
-   * fresh one. Because every *other* dashboard request succeeds (and so
-   * clears the one-shot reload guard), that turns this expected 401 into
-   * an infinite reload loop. Opting out keeps the 401 a plain throw the
-   * widget can catch.
+   * ``allowUnauthorized`` keeps the expected loopback 401 a plain throw the
+   * widget can catch, rather than routing it through any shared 401 handling.
    */
   getAuthMe: () =>
     fetchJSON<AuthMeResponse>("/api/auth/me", undefined, {
@@ -481,17 +411,14 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key }),
     }),
-  revealEnvVar: async (key: string) => {
-    const token = await getSessionToken();
-    return fetchJSON<{ key: string; value: string }>("/api/env/reveal", {
+  revealEnvVar: (key: string) =>
+    fetchJSON<{ key: string; value: string }>("/api/env/reveal", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        [SESSION_HEADER]: token,
       },
       body: JSON.stringify({ key }),
-    });
-  },
+    }),
 
   // Cron jobs
   getCronJobs: (profile = "all") =>
@@ -716,58 +643,46 @@ export const api = {
   // OAuth provider management
   getOAuthProviders: () =>
     fetchJSON<OAuthProvidersResponse>("/api/providers/oauth"),
-  disconnectOAuthProvider: async (providerId: string) => {
-    const token = await getSessionToken();
-    return fetchJSON<{ ok: boolean; provider: string }>(
+  disconnectOAuthProvider: (providerId: string) =>
+    fetchJSON<{ ok: boolean; provider: string }>(
       `/api/providers/oauth/${encodeURIComponent(providerId)}`,
       {
         method: "DELETE",
-        headers: { [SESSION_HEADER]: token },
       },
-    );
-  },
-  startOAuthLogin: async (providerId: string) => {
-    const token = await getSessionToken();
-    return fetchJSON<OAuthStartResponse>(
+    ),
+  startOAuthLogin: (providerId: string) =>
+    fetchJSON<OAuthStartResponse>(
       `/api/providers/oauth/${encodeURIComponent(providerId)}/start`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          [SESSION_HEADER]: token,
         },
         body: "{}",
       },
-    );
-  },
-  submitOAuthCode: async (providerId: string, sessionId: string, code: string) => {
-    const token = await getSessionToken();
-    return fetchJSON<OAuthSubmitResponse>(
+    ),
+  submitOAuthCode: (providerId: string, sessionId: string, code: string) =>
+    fetchJSON<OAuthSubmitResponse>(
       `/api/providers/oauth/${encodeURIComponent(providerId)}/submit`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          [SESSION_HEADER]: token,
         },
         body: JSON.stringify({ session_id: sessionId, code }),
       },
-    );
-  },
+    ),
   pollOAuthSession: (providerId: string, sessionId: string) =>
     fetchJSON<OAuthPollResponse>(
       `/api/providers/oauth/${encodeURIComponent(providerId)}/poll/${encodeURIComponent(sessionId)}`,
     ),
-  cancelOAuthSession: async (sessionId: string) => {
-    const token = await getSessionToken();
-    return fetchJSON<{ ok: boolean }>(
+  cancelOAuthSession: (sessionId: string) =>
+    fetchJSON<{ ok: boolean }>(
       `/api/providers/oauth/sessions/${encodeURIComponent(sessionId)}`,
       {
         method: "DELETE",
-        headers: { [SESSION_HEADER]: token },
       },
-    );
-  },
+    ),
 
   // Messaging platforms (gateway channels)
   getMessagingPlatforms: () =>
