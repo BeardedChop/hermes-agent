@@ -110,9 +110,7 @@ class TestOpenRouterProfile:
     def test_extra_body_no_prefs(self):
         p = get_provider_profile("openrouter")
         body = p.build_extra_body()
-        # Usage accounting is always requested (real provider-reported cost);
-        # nothing else should appear without prefs/session.
-        assert body == {"usage": {"include": True}}
+        assert body == {}
 
     def test_pareto_min_coding_score_emitted_for_pareto_model(self):
         """min_coding_score → plugins block when model is openrouter/pareto-code."""
