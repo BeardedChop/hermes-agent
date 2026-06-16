@@ -10361,6 +10361,13 @@ def _ws_auth_reason(ws: "WebSocket") -> tuple[Optional[str], str]:
     (the SPA bundle isn't carrying the token any longer, and a leaked
     ``_SESSION_TOKEN`` must not grant WS access once the gate is engaged).
 
+    Loopback / ``--insecure``: NO per-connection identity token. The
+    loopback peer-IP gate (``_ws_client_is_allowed``) and the Host/Origin
+    guard (``_ws_host_origin_is_allowed``) are the boundary here — the WS
+    analogue of "the loopback bind is the security boundary" on the HTTP
+    side. There is no token to present (the legacy ``_SESSION_TOKEN`` is
+    being removed).
+
     Audit-logs the rejection so operators can debug "WS keeps closing"
     issues from the log.
     """
@@ -10408,12 +10415,10 @@ def _ws_auth_reason(ws: "WebSocket") -> tuple[Optional[str], str]:
             )
             return "ticket_invalid", "ticket"
 
-    token = ws.query_params.get("token", "")
-    if not token:
-        return "no_credential", "none"
-    if hmac.compare_digest(token.encode(), _SESSION_TOKEN.encode()):
-        return None, "token"
-    return "token_mismatch", "token"
+    # Loopback / --insecure: no identity token. The peer-IP loopback gate
+    # and Host/Origin guard (applied by the WS handlers via
+    # _ws_request_is_allowed) are the boundary; there is no token to check.
+    return None, "loopback"
 
 
 def _ws_auth_ok(ws: "WebSocket") -> bool:

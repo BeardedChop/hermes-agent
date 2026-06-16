@@ -140,24 +140,27 @@ def _fake_ws(params: dict):
     return _WS()
 
 
-def test_ws_loopback_token_accepted():
+def test_ws_loopback_no_token_required():
+    """Loopback WS accepts without a token: the peer-IP loopback gate +
+    Host/Origin guard are the boundary (the WS analogue of the loopback
+    bind being the HTTP boundary)."""
     prev = getattr(web_server.app.state, "auth_required", None)
     web_server.app.state.auth_required = False
     try:
-        reason, cred = web_server._ws_auth_reason(
-            _fake_ws({"token": web_server._SESSION_TOKEN})
-        )
-        assert reason is None and cred == "token"
+        reason, cred = web_server._ws_auth_reason(_fake_ws({}))
+        assert reason is None and cred == "loopback"
     finally:
         web_server.app.state.auth_required = prev
 
 
-def test_ws_loopback_bad_token_rejected():
+def test_ws_loopback_token_ignored():
+    """A stale/garbage ``?token=`` on loopback is simply ignored (no
+    identity token is consulted anymore)."""
     prev = getattr(web_server.app.state, "auth_required", None)
     web_server.app.state.auth_required = False
     try:
-        reason, cred = web_server._ws_auth_reason(_fake_ws({"token": "nope"}))
-        assert reason == "token_mismatch" and cred == "token"
+        reason, cred = web_server._ws_auth_reason(_fake_ws({"token": "anything"}))
+        assert reason is None and cred == "loopback"
     finally:
         web_server.app.state.auth_required = prev
 

@@ -5065,31 +5065,62 @@ class TestPtyWebSocket:
                 pass
         assert exc.value.code == 4404
 
-    def test_rejects_missing_token(self, monkeypatch):
+    def test_loopback_accepts_without_token(self, monkeypatch):
+        """Loopback /api/pty needs no token after the legacy-token teardown.
+
+        The peer-IP loopback gate + Host/Origin guard are the boundary
+        (the WS analogue of the loopback bind being the HTTP boundary), so
+        a tokenless upgrade is accepted and the PTY child spawns. WS auth
+        rejection in GATED mode is covered by test_dashboard_auth_ws_auth.py.
+        """
         monkeypatch.setattr(
             self.ws_module,
             "_resolve_chat_argv",
-            lambda resume=None, sidecar_url=None, profile=None: (["/bin/cat"], None, None),
+            lambda resume=None, sidecar_url=None, profile=None: (
+                ["/bin/sh", "-c", "printf hermes-ws-ok"],
+                None,
+                None,
+            ),
         )
-        from starlette.websockets import WebSocketDisconnect
+        # No token in the query string at all → still connects on loopback.
+        with self.client.websocket_connect("/api/pty") as conn:
+            import time
 
-        with pytest.raises(WebSocketDisconnect) as exc:
-            with self.client.websocket_connect("/api/pty"):
-                pass
-        assert exc.value.code == 4401
+            buf = b""
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                try:
+                    buf += conn.receive_bytes()
+                except Exception:
+                    break
+                if b"hermes-ws-ok" in buf:
+                    break
+            assert b"hermes-ws-ok" in buf
 
-    def test_rejects_bad_token(self, monkeypatch):
+    def test_loopback_ignores_stale_token(self, monkeypatch):
+        """A stale/garbage ``?token=`` on loopback is ignored, not rejected."""
         monkeypatch.setattr(
             self.ws_module,
             "_resolve_chat_argv",
-            lambda resume=None, sidecar_url=None, profile=None: (["/bin/cat"], None, None),
+            lambda resume=None, sidecar_url=None, profile=None: (
+                ["/bin/sh", "-c", "printf hermes-ws-ok"],
+                None,
+                None,
+            ),
         )
-        from starlette.websockets import WebSocketDisconnect
+        with self.client.websocket_connect(self._url(token="wrong")) as conn:
+            import time
 
-        with pytest.raises(WebSocketDisconnect) as exc:
-            with self.client.websocket_connect(self._url(token="wrong")):
-                pass
-        assert exc.value.code == 4401
+            buf = b""
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                try:
+                    buf += conn.receive_bytes()
+                except Exception:
+                    break
+                if b"hermes-ws-ok" in buf:
+                    break
+            assert b"hermes-ws-ok" in buf
 
     def test_streams_child_stdout_to_client(self, monkeypatch):
         monkeypatch.setattr(

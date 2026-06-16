@@ -205,26 +205,32 @@ def _fake_ws(*, query: dict, client_host: str = "127.0.0.1", path: str = "/api/p
 
 
 class TestWsAuthOkLoopback:
-    """Gate OFF — legacy token path."""
+    """Gate OFF — loopback has NO per-connection identity token.
 
-    def test_correct_token_accepted(self, loopback_app):
-        ws = _fake_ws(query={"token": web_server._SESSION_TOKEN})
+    After the legacy-token teardown, ``_ws_auth_ok`` accepts every
+    loopback WS upgrade: the real boundary is the peer-IP loopback gate
+    (``_ws_client_is_allowed``) + the Host/Origin guard
+    (``_ws_host_origin_is_allowed``), applied by the WS handlers via
+    ``_ws_request_is_allowed`` — the WS analogue of "the loopback bind is
+    the HTTP security boundary". Any token/ticket/internal query param is
+    simply ignored.
+    """
+
+    def test_no_token_accepted(self, loopback_app):
+        ws = _fake_ws(query={})
         assert web_server._ws_auth_ok(ws) is True
 
-    def test_wrong_token_rejected(self, loopback_app):
-        ws = _fake_ws(query={"token": "not-the-real-token"})
-        assert web_server._ws_auth_ok(ws) is False
-
-    def test_missing_token_rejected(self, loopback_app):
-        ws = _fake_ws(query={})
-        assert web_server._ws_auth_ok(ws) is False
+    def test_stale_token_ignored_still_accepted(self, loopback_app):
+        ws = _fake_ws(query={"token": "anything-at-all"})
+        assert web_server._ws_auth_ok(ws) is True
 
     def test_ticket_param_ignored_in_loopback(self, loopback_app):
-        # Even if someone sneaks a ticket through, loopback mode only
-        # cares about ?token=. A naked ticket isn't a token.
+        # Loopback consults no credential; a ticket query param is neither
+        # required nor rejected — the request is accepted on the bind/origin
+        # boundary alone.
         ticket = mint_ticket(user_id="u1", provider="stub")
         ws = _fake_ws(query={"ticket": ticket})
-        assert web_server._ws_auth_ok(ws) is False
+        assert web_server._ws_auth_ok(ws) is True
 
 
 class TestWsAuthOkGated:
@@ -301,12 +307,13 @@ class TestWsAuthOkGated:
         ws = _fake_ws(query={"internal": "not-the-internal-credential"})
         assert web_server._ws_auth_ok(ws) is False
 
-    def test_internal_credential_not_accepted_in_loopback(self, loopback_app):
-        """Outside gated mode, ?internal= is meaningless — only ?token= works.
-        A naked internal credential must not authenticate."""
+    def test_internal_credential_param_ignored_in_loopback(self, loopback_app):
+        """Outside gated mode there is no credential check at all — loopback
+        accepts the upgrade on the bind/origin boundary. An ``?internal=``
+        query param is neither required nor rejected; it's simply ignored."""
         cred = internal_ws_credential()
         ws = _fake_ws(query={"internal": cred})
-        assert web_server._ws_auth_ok(ws) is False
+        assert web_server._ws_auth_ok(ws) is True
 
 
 class TestWsRequestIsAllowedGated:
