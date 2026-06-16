@@ -18,6 +18,7 @@ const {
   RT_COOKIE_VARIANTS,
   authModeFromStatus,
   buildGatewayWsUrl,
+  buildGatewayWsUrlNoAuth,
   buildGatewayWsUrlWithTicket,
   connectionScopeKey,
   cookiesHaveSession,
@@ -199,6 +200,24 @@ test('buildGatewayWsUrl honors a path prefix', () => {
 
 test('buildGatewayWsUrl url-encodes the token', () => {
   assert.equal(buildGatewayWsUrl('https://host', 'a/b c+d'), 'wss://host/api/ws?token=a%2Fb%20c%2Bd')
+})
+
+// --- buildGatewayWsUrlNoAuth (local loopback, credential-free) ---
+
+test('buildGatewayWsUrlNoAuth builds a bare ws URL with no token param', () => {
+  assert.equal(buildGatewayWsUrlNoAuth('http://127.0.0.1:9119'), 'ws://127.0.0.1:9119/api/ws')
+})
+
+test('buildGatewayWsUrlNoAuth uses wss for https', () => {
+  assert.equal(buildGatewayWsUrlNoAuth('https://gw.example.com'), 'wss://gw.example.com/api/ws')
+})
+
+test('buildGatewayWsUrlNoAuth honors a path prefix and never adds a credential', () => {
+  const url = buildGatewayWsUrlNoAuth('http://127.0.0.1:9119/hermes/')
+  assert.equal(url, 'ws://127.0.0.1:9119/hermes/api/ws')
+  assert.ok(!url.includes('token='))
+  assert.ok(!url.includes('ticket='))
+  assert.ok(!url.includes('?'))
 })
 
 // --- buildGatewayWsUrlWithTicket (oauth) ---

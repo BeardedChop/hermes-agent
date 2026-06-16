@@ -34,7 +34,6 @@ const {
 } = require('./session-windows.cjs')
 const { canImportHermesCli, verifyHermesCli } = require('./backend-probes.cjs')
 const { probeGatewayWebSocket } = require('./gateway-ws-probe.cjs')
-const { adoptServedDashboardToken } = require('./dashboard-token.cjs')
 const { waitForDashboardPort } = require('./backend-ready.cjs')
 const { serializeJsonBody, setJsonRequestHeaders } = require('./oauth-net-request.cjs')
 const { fetchMarketplaceThemes, searchMarketplaceThemes } = require('./vscode-marketplace.cjs')
@@ -57,6 +56,7 @@ const { isPackagedInstallPath: isPackagedInstallPathUnderRoots } = require('./wo
 const {
   authModeFromStatus,
   buildGatewayWsUrl,
+  buildGatewayWsUrlNoAuth,
   buildGatewayWsUrlWithTicket,
   connectionScopeKey,
   cookiesHaveSession,
@@ -2638,7 +2638,10 @@ function fetchJson(url, token, options = {}) {
         method: options.method || 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'X-Hermes-Session-Token': token,
+          // The LOCAL loopback backend needs no credential — the server ignores
+          // any identity token there — so a null/empty token omits the header
+          // entirely. The REMOTE 'token' auth mode still sends its token.
+          ...(token ? { 'X-Hermes-Session-Token': token } : {}),
           ...(body ? { 'Content-Length': String(body.length) } : {})
         }
       },
@@ -3268,6 +3271,9 @@ function closePreviewWatchers() {
   }
 }
 
+// Poll /api/status until the backend answers. `token` is optional: the LOCAL
+// loopback backend sends no credential (the server ignores it there), so it's
+// omitted; the REMOTE 'token' auth mode still passes its user-saved token.
 async function waitForHermes(baseUrl, token) {
   const deadline = Date.now() + 45_000
   let lastError = null
@@ -4696,7 +4702,6 @@ async function spawnPoolBackend(profile, entry) {
     }
   }
 
-  const token = crypto.randomBytes(32).toString('base64url')
   // --profile wins over the inherited HERMES_HOME env (see _apply_profile_override
   // step 3 in hermes_cli/main.py), so the child re-homes to this profile.
   // --port 0: the OS assigns an ephemeral port; the child announces it on stdout.
@@ -4720,7 +4725,6 @@ async function spawnPoolBackend(profile, entry) {
         // the child process. Inherited TERMINAL_CWD (or a stale config bridge)
         // can still point at the install dir even when spawn cwd is home.
         TERMINAL_CWD: hermesCwd,
-        HERMES_DASHBOARD_SESSION_TOKEN: token,
         // Marks this dashboard backend as desktop-spawned so it runs the cron
         // scheduler tick loop (the gateway isn't running under the app).
         HERMES_DESKTOP: '1',
@@ -4731,7 +4735,6 @@ async function spawnPoolBackend(profile, entry) {
     })
   )
   entry.process = child
-  entry.token = token
 
   child.stdout.on('data', rememberLog)
   child.stderr.on('data', rememberLog)
@@ -4761,23 +4764,20 @@ async function spawnPoolBackend(profile, entry) {
   entry.port = port
 
   const baseUrl = `http://127.0.0.1:${port}`
-  await Promise.race([waitForHermes(baseUrl, token), startFailed])
+  await Promise.race([waitForHermes(baseUrl), startFailed])
   ready = true
-  const authToken = await adoptServedDashboardToken(baseUrl, token, {
-    childAlive: () => child.exitCode === null && !child.killed,
-    label: `Hermes backend for profile "${profile}"`,
-    rememberLog
-  })
-  entry.token = authToken
 
   return {
     baseUrl,
     mode: 'local',
     source: 'local',
+    // The local backend binds to loopback, where the gateway ignores any
+    // identity token (peer-IP + Host/Origin guard is the boundary). No
+    // credential is sent: REST omits X-Hermes-Session-Token, WS omits ?token=.
     authMode: 'token',
-    token: authToken,
+    token: null,
     profile,
-    wsUrl: `ws://127.0.0.1:${port}/api/ws?token=${encodeURIComponent(authToken)}`,
+    wsUrl: buildGatewayWsUrlNoAuth(baseUrl),
     logs: hermesLog.slice(-80),
     ...getWindowState()
   }
@@ -4899,7 +4899,6 @@ async function startHermes() {
       }
     }
 
-    const token = crypto.randomBytes(32).toString('base64url')
     // --port 0: the OS assigns an ephemeral port; the child announces it on stdout.
     const dashboardArgs = ['dashboard', '--no-open', '--host', '127.0.0.1', '--port', '0']
     // Pin the desktop's chosen profile via the global --profile flag. This is
@@ -4937,7 +4936,6 @@ async function startHermes() {
           HERMES_HOME,
           ...backend.env,
           TERMINAL_CWD: hermesCwd,
-          HERMES_DASHBOARD_SESSION_TOKEN: token,
           // Marks this dashboard backend as desktop-spawned so it runs the cron
           // scheduler tick loop (the gateway isn't running under the app).
           HERMES_DESKTOP: '1',
@@ -5001,13 +4999,8 @@ async function startHermes() {
 
     const baseUrl = `http://127.0.0.1:${port}`
     await advanceBootProgress('backend.wait', 'Waiting for Hermes backend to become ready', 90)
-    await Promise.race([waitForHermes(baseUrl, token), backendStartFailed])
+    await Promise.race([waitForHermes(baseUrl), backendStartFailed])
     backendReady = true
-    const authToken = await adoptServedDashboardToken(baseUrl, token, {
-      // The exit/error handlers null hermesProcess when the child dies.
-      childAlive: () => hermesProcess !== null && hermesProcess.exitCode === null && !hermesProcess.killed,
-      rememberLog
-    })
     updateBootProgress({
       phase: 'backend.ready',
       message: 'Hermes backend is ready. Finalizing desktop startup',
@@ -5020,9 +5013,12 @@ async function startHermes() {
       baseUrl,
       mode: 'local',
       source: 'local',
+      // The local backend binds to loopback, where the gateway ignores any
+      // identity token (peer-IP + Host/Origin guard is the boundary). No
+      // credential is sent: REST omits X-Hermes-Session-Token, WS omits ?token=.
       authMode: 'token',
-      token: authToken,
-      wsUrl: `ws://127.0.0.1:${port}/api/ws?token=${encodeURIComponent(authToken)}`,
+      token: null,
+      wsUrl: buildGatewayWsUrlNoAuth(baseUrl),
       logs: hermesLog.slice(-80),
       ...getWindowState()
     }

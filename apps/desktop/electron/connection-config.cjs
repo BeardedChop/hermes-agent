@@ -79,6 +79,24 @@ function buildGatewayWsUrlWithTicket(baseUrl, ticket) {
 }
 
 /**
+ * Build a credential-free WS URL for the LOCAL spawned backend. The desktop's
+ * own dashboard binds to loopback (127.0.0.1), where the gateway gates the WS
+ * upgrade purely on the peer-IP + Host/Origin guard and IGNORES any token. So
+ * the local renderer connects to a bare `ws(s)://host/prefix/api/ws` with no
+ * `?token=` — there is no credential to send.
+ *
+ * This is distinct from buildGatewayWsUrl (the REMOTE `token` auth mode, which
+ * still appends `?token=` for a user-saved remote-gateway token).
+ */
+function buildGatewayWsUrlNoAuth(baseUrl) {
+  const parsed = new URL(baseUrl)
+  const wsScheme = parsed.protocol === 'https:' ? 'wss' : 'ws'
+  const prefix = parsed.pathname.replace(/\/+$/, '')
+
+  return `${wsScheme}://${parsed.host}${prefix}/api/ws`
+}
+
+/**
  * Build the WS URL the renderer would connect with, so the connection test can
  * exercise the same transport the app actually uses.
  *
@@ -274,6 +292,7 @@ module.exports = {
   RT_COOKIE_VARIANTS,
   authModeFromStatus,
   buildGatewayWsUrl,
+  buildGatewayWsUrlNoAuth,
   buildGatewayWsUrlWithTicket,
   connectionScopeKey,
   cookiesHaveSession,
