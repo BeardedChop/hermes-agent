@@ -2281,6 +2281,18 @@ def _launch_tui(
     )
     os.close(active_session_fd)
     env["HERMES_TUI_ACTIVE_SESSION_FILE"] = active_session_file
+    # Tree-sitter grammar cache for the OpenTUI engine: grammars are fetched
+    # from GitHub on first use and cached here (profile-aware). Unset → OpenTUI
+    # falls back to its XDG default ($XDG_DATA_HOME/opentui). See
+    # ui-opentui/src/boundary/parsers.ts.
+    try:
+        from hermes_cli.config import get_hermes_home
+
+        env["HERMES_TUI_PARSER_CACHE"] = str(
+            get_hermes_home() / "cache" / "opentui-parsers"
+        )
+    except Exception:
+        logger.debug("Failed to resolve OpenTUI parser cache dir", exc_info=True)
     env["HERMES_PYTHON_SRC_ROOT"] = os.environ.get(
         "HERMES_PYTHON_SRC_ROOT", str(PROJECT_ROOT)
     )

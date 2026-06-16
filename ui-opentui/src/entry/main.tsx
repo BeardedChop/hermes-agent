@@ -32,7 +32,7 @@ import { getLog } from '../boundary/log.ts'
 import { startMemlog } from '../boundary/memlog.ts'
 import { startMemoryMonitor } from '../boundary/memoryMonitor.ts'
 import { startProactiveGc } from '../boundary/proactiveGc.ts'
-import { registerVendoredParsers } from '../boundary/parsers.ts'
+import { registerRemoteParsers } from '../boundary/parsers.ts'
 import { acquireRenderer } from '../boundary/renderer.ts'
 import { makeAppLayer } from '../boundary/runtime.ts'
 import { nthAssistantResponse } from '../logic/copy.ts'
@@ -68,10 +68,11 @@ import { App } from '../view/App.tsx'
 import { seedLearnedNames } from '../view/composer.tsx'
 import { TerminalChrome } from '../view/terminalChrome.tsx'
 
-// Syntax-highlighting language expansion: register the vendored tree-sitter
+// Syntax-highlighting language expansion: register the remote tree-sitter
 // grammars (python/rust/go/bash/json/c/html/css/yaml/toml) before the first
-// <code>/<markdown> mount initializes the global tree-sitter client.
-registerVendoredParsers()
+// <code>/<markdown> mount initializes the global tree-sitter client. Grammars
+// are fetched from GitHub on first use and cached under HERMES_TUI_PARSER_CACHE.
+registerRemoteParsers()
 import type { SessionPickerOps } from '../view/overlays/sessionPicker.tsx'
 import { ThemeProvider } from '../view/theme.tsx'
 import { makeFakeGatewayLayer, type FakeGatewayController } from './fakeGateway.ts'

@@ -1,49 +1,55 @@
 /**
- * Vendored tree-sitter grammar registration (syntax-highlighting language
- * expansion). Layers:
- *   1. config: every manifest grammar has valid vendored assets (wasm magic,
- *      non-empty query) and the built configs point at existing absolute paths.
+ * Remote tree-sitter grammar registration (syntax-highlighting language
+ * expansion). Grammars are NOT vendored — they're declared as remote URLs in
+ * parsers.manifest.json and fetched+cached by OpenTUI on first use. Layers:
+ *   1. config: every manifest grammar builds a well-formed config — a release
+ *      `.wasm` URL + a highlights `.scm` URL (both https).
  *   2. resolution: core's filetype maps route our curated extensions/fence
  *      labels to the registered filetype ids.
- * Visual color is live-smoke territory (highlighting settles async — see
- * codeBlock.tsx); these tests pin the wiring that makes it possible.
+ * Actual fetch + visual color is live-smoke territory (network + async settle —
+ * see codeBlock.tsx); these tests pin the wiring that makes it possible without
+ * hitting the network.
  */
-import { readFileSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
-
 import { extToFiletype, infoStringToFiletype, pathToFiletype } from '@opentui/core'
 import { describe, expect, test } from 'vitest'
 
-import { registerVendoredParsers, vendoredParsers } from '../boundary/parsers.ts'
+import { parserCacheDir, registerRemoteParsers, remoteParsers } from '../boundary/parsers.ts'
 
 const EXPECTED = ['python', 'rust', 'go', 'bash', 'json', 'c', 'html', 'css', 'yaml', 'toml']
 
-describe('vendored grammar configs', () => {
-  test('all 10 curated grammars resolve with existing absolute asset paths', () => {
-    const configs = vendoredParsers()
+describe('remote grammar configs', () => {
+  test('all 10 curated grammars build configs from the manifest', () => {
+    const configs = remoteParsers()
     expect(configs.map(c => c.filetype).sort()).toEqual([...EXPECTED].sort())
-    for (const config of configs) {
-      expect(isAbsolute(config.wasm)).toBe(true)
-      expect(isAbsolute(config.queries.highlights[0]!)).toBe(true)
+  })
+
+  test('each config carries an https .wasm URL and a non-empty .scm URL', () => {
+    for (const config of remoteParsers()) {
+      expect(config.wasm, config.filetype).toMatch(/^https:\/\/.+\.wasm$/)
+      const scm = config.queries.highlights[0]!
+      expect(scm.startsWith('https://'), config.filetype).toBe(true)
+      expect(scm.endsWith('.scm'), config.filetype).toBe(true)
     }
   })
 
-  test('vendored wasm files carry the wasm magic; queries are non-empty', () => {
-    for (const config of vendoredParsers()) {
-      const wasm = readFileSync(config.wasm)
-      expect(wasm.subarray(0, 4).toString('latin1'), config.filetype).toBe('\0asm')
-      const query = readFileSync(config.queries.highlights[0]!, 'utf8')
-      expect(query.trim().length, config.filetype).toBeGreaterThan(0)
-    }
-  })
-
-  test('registerVendoredParsers registers and reports the full set', () => {
-    const registered = registerVendoredParsers()
+  test('registerRemoteParsers registers and reports the full set', () => {
+    const registered = registerRemoteParsers()
     expect(registered.map(r => r.filetype).sort()).toEqual([...EXPECTED].sort())
   })
 
-  test('a missing assets dir degrades to empty (plain-text fallback), no throw', () => {
-    expect(vendoredParsers('/nonexistent/parsers')).toEqual([])
+  test('parserCacheDir reflects HERMES_TUI_PARSER_CACHE (undefined when unset)', () => {
+    const prev = process.env.HERMES_TUI_PARSER_CACHE
+    try {
+      delete process.env.HERMES_TUI_PARSER_CACHE
+      expect(parserCacheDir()).toBeUndefined()
+      process.env.HERMES_TUI_PARSER_CACHE = '/tmp/hermes-parser-cache'
+      expect(parserCacheDir()).toBe('/tmp/hermes-parser-cache')
+      process.env.HERMES_TUI_PARSER_CACHE = '   '
+      expect(parserCacheDir()).toBeUndefined()
+    } finally {
+      if (prev === undefined) delete process.env.HERMES_TUI_PARSER_CACHE
+      else process.env.HERMES_TUI_PARSER_CACHE = prev
+    }
   })
 })
 
