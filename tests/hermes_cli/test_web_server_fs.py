@@ -5,6 +5,11 @@ import pytest
 
 from hermes_cli import web_server
 
+# These tests mutate ``web_server.app.state`` (auth_required / bound_host);
+# share the xdist group used by every dashboard-auth gate test so they
+# don't race against each other across workers.
+pytestmark = pytest.mark.xdist_group("dashboard_auth_app_state")
+
 pytest.importorskip("starlette.testclient")
 from starlette.testclient import TestClient
 
@@ -174,15 +179,54 @@ def test_fs_default_cwd_falls_back_when_terminal_cwd_is_invalid(client, tmp_path
     assert response.json() == {"cwd": str(fallback), "branch": ""}
 
 
-def test_fs_endpoints_require_auth(tmp_path):
-    client = TestClient(web_server.app)
+def test_fs_endpoints_no_identity_gate_on_loopback(tmp_path):
+    """Loopback has no identity gate after the legacy-token teardown.
+
+    The /api/fs/* endpoints read arbitrary files, but on a loopback bind
+    the OS boundary + CSRF guard are the protection, not a per-request
+    token. A tokenless local request is served (reaches the handler — any
+    non-401). Identity enforcement for these endpoints in GATED mode is
+    pinned by test_fs_endpoints_require_auth_in_gated_mode below.
+    """
+    prev = getattr(web_server.app.state, "auth_required", None)
+    web_server.app.state.auth_required = False
     target = tmp_path / "secret.txt"
     target.write_text("secret")
+    try:
+        client = TestClient(web_server.app)
+        list_response = client.get("/api/fs/list", params={"path": str(tmp_path)})
+        read_response = client.get("/api/fs/read-text", params={"path": str(target)})
+        default_response = client.get("/api/fs/default-cwd")
+        assert list_response.status_code != 401
+        assert read_response.status_code != 401
+        assert default_response.status_code != 401
+    finally:
+        web_server.app.state.auth_required = prev
 
-    list_response = client.get("/api/fs/list", params={"path": str(tmp_path)})
-    read_response = client.get("/api/fs/read-text", params={"path": str(target)})
-    default_response = client.get("/api/fs/default-cwd")
 
-    assert list_response.status_code == 401
-    assert read_response.status_code == 401
-    assert default_response.status_code == 401
+def test_fs_endpoints_require_auth_in_gated_mode(tmp_path):
+    """In gated (non-loopback) mode the /api/fs/* endpoints require a
+    verified session cookie — a cookieless request 401s at the gate."""
+    from hermes_cli.dashboard_auth import clear_providers, register_provider
+    from tests.hermes_cli.conftest_dashboard_auth import StubAuthProvider
+
+    prev_host = getattr(web_server.app.state, "bound_host", None)
+    prev_req = getattr(web_server.app.state, "auth_required", None)
+    clear_providers()
+    register_provider(StubAuthProvider())
+    web_server.app.state.bound_host = "fly-app.fly.dev"
+    web_server.app.state.auth_required = True
+    target = tmp_path / "secret.txt"
+    target.write_text("secret")
+    try:
+        client = TestClient(web_server.app, base_url="https://fly-app.fly.dev")
+        assert client.get(
+            "/api/fs/list", params={"path": str(tmp_path)}
+        ).status_code == 401
+        assert client.get(
+            "/api/fs/read-text", params={"path": str(target)}
+        ).status_code == 401
+    finally:
+        clear_providers()
+        web_server.app.state.bound_host = prev_host
+        web_server.app.state.auth_required = prev_req

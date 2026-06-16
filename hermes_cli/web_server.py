@@ -263,21 +263,17 @@ def _has_valid_query_token(request: Request, path: str) -> bool:
 def _require_token(request: Request) -> None:
     """Authorize a sensitive endpoint, raising 401 if the caller isn't allowed.
 
-    Two auth schemes protect the dashboard, exactly one active per bind:
+    Two regimes, exactly one active per bind:
 
-    * **Loopback / ``--insecure`` mode** (``auth_required`` False): the
-      ephemeral ``_SESSION_TOKEN`` is injected into the SPA HTML and echoed
-      back via ``X-Hermes-Session-Token`` (or the legacy ``Bearer`` header).
-      Validate it here.
-    * **Gated / OAuth mode** (``auth_required`` True): ``_SESSION_TOKEN`` is
-      NOT injected (the SPA authenticates with a session cookie), so there is
-      no token to check. The ``gated_auth_middleware`` has already verified the
-      cookie before the request reached this handler — any non-public ``/api/``
-      route it lets through carries a verified ``request.state.session``. The
-      legacy ``auth_middleware`` likewise short-circuits in this mode. Requiring
-      the (absent) token here would 401 every cookie-authenticated request,
-      making plugin install/enable/disable and the other ``_require_token``
-      endpoints permanently unreachable behind the gate. Defer to the gate.
+    * **Gated / OAuth mode** (``auth_required`` True): the
+      ``gated_auth_middleware`` has already verified the session cookie
+      before the request reached this handler — any non-public ``/api/``
+      route it lets through carries a verified ``request.state.session``.
+      Accept iff that session is present; 401 otherwise.
+    * **Loopback / ``--insecure`` mode** (``auth_required`` False): there is
+      NO identity gate. The loopback bind is the boundary, the CSRF guard
+      blocks cross-origin mutations, and CORS blocks cross-origin reads. A
+      local user is entitled to call these routes, so allow them.
     """
     if getattr(request.app.state, "auth_required", False):
         # Gate is authoritative. It attaches ``request.state.session`` on
@@ -286,8 +282,9 @@ def _require_token(request: Request) -> None:
         if getattr(request.state, "session", None) is not None:
             return
         raise HTTPException(status_code=401, detail="Unauthorized")
-    if not _has_valid_session_token(request):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    # Loopback / --insecure: no identity gate. CSRF guard + bind boundary
+    # protect these routes; a local user is entitled to call them.
+    return
 
 
 # Accepted Host header values for loopback binds. DNS rebinding attacks
@@ -467,19 +464,20 @@ async def _dashboard_auth_gate(request: Request, call_next):
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    """Require the session token on all /api/ routes except the public list."""
-    # When the OAuth gate is active, cookie-based auth (gated_auth_middleware
-    # above) is authoritative.  The legacy _SESSION_TOKEN path is loopback-only
-    # and is skipped here so the gate's session attachment isn't overridden.
-    if getattr(request.app.state, "auth_required", False):
-        return await call_next(request)
-    path = request.url.path
-    if path.startswith("/api/") and path not in _PUBLIC_API_PATHS:
-        if not _has_valid_session_token(request) and not _has_valid_query_token(request, path):
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Unauthorized"},
-            )
+    """Loopback path: NO identity gate.
+
+    The dashboard's identity authentication is the pluggable gate
+    (``gated_auth_middleware``), engaged only on non-loopback binds. On a
+    loopback bind the OS boundary IS the security boundary: nothing off the
+    machine can reach 127.0.0.1. Cross-origin mutations are rejected by
+    ``csrf_guard_middleware``; cross-origin reads are neutralised by the
+    localhost-only CORS policy. There is no per-request identity token on
+    loopback anymore (the legacy ``_SESSION_TOKEN`` is being removed).
+
+    This remains a registered middleware (rather than being deleted) so the
+    Phase-2 diff is minimal and reversible; Phase 5 removes it entirely once
+    the token symbol is gone.
+    """
     return await call_next(request)
 
 

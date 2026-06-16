@@ -97,6 +97,29 @@ def test_gated_status_still_public(gated_client):
 
 
 # ---------------------------------------------------------------------------
+# Loopback has no identity gate (post-Phase-2 contract)
+# ---------------------------------------------------------------------------
+
+
+def test_loopback_no_identity_gate(loopback_client):
+    """Loopback: the bind + CSRF guard + CORS are the boundary, not an
+    identity token. A tokenless read is allowed."""
+    r = loopback_client.get("/api/sessions")
+    assert r.status_code != 401
+
+
+def test_loopback_still_blocks_cross_site_mutation(loopback_client):
+    """The CSRF guard (not an identity token) is what protects loopback
+    mutations from a drive-by cross-origin page."""
+    r = loopback_client.post(
+        "/api/providers/validate",
+        headers={"Sec-Fetch-Site": "cross-site"},
+        json={"key": "OPENAI_API_KEY", "value": "x"},
+    )
+    assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
 # WS auth matrix (via _ws_auth_reason — TestClient.websocket_connect is
 # unreliable for handshake-rejection assertions, so test the function)
 # ---------------------------------------------------------------------------

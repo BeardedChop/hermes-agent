@@ -40,11 +40,16 @@ def test_loopback_status_is_public(client_loopback):
     assert "version" in body
 
 
-def test_loopback_protected_route_requires_token(client_loopback):
-    """Any non-public /api/ route must require the session token."""
-    # /api/sessions exists and is auth-gated by auth_middleware.
+def test_loopback_protected_route_no_identity_gate(client_loopback):
+    """Loopback has no identity gate (the bind is the boundary).
+
+    Pre-teardown this route 401'd without the session token. After the
+    legacy-token teardown (Phase 2), loopback ``/api/`` routes are served
+    without an identity check — the loopback bind + CSRF guard + CORS are
+    the security boundary, not a per-request token.
+    """
     r = client_loopback.get("/api/sessions")
-    assert r.status_code == 401
+    assert r.status_code != 401
 
 
 def test_loopback_protected_route_accepts_session_token(client_loopback):

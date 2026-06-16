@@ -677,15 +677,33 @@ class TestWebhookToggleEndpoint:
 
 
 class TestAdminEndpointsAuthGate:
-    """Every admin endpoint must sit behind the dashboard session-token gate."""
+    """Every admin endpoint must sit behind the dashboard auth gate.
+
+    Identity enforcement lives in the pluggable OAuth gate (gated mode),
+    not on loopback — after the legacy-token teardown, a loopback bind has
+    no identity gate (the bind is the boundary). So this exercises the
+    GATED regime: a cookieless request to each admin endpoint must 401.
+    """
 
     @pytest.fixture(autouse=True)
     def _setup(self, _isolate_hermes_home):
         from starlette.testclient import TestClient
         from hermes_cli.web_server import app
+        from hermes_cli.dashboard_auth import clear_providers, register_provider
+        from tests.hermes_cli.conftest_dashboard_auth import StubAuthProvider
 
-        # No session header → must be rejected.
-        self.client = TestClient(app)
+        clear_providers()
+        register_provider(StubAuthProvider())
+        self._prev_host = getattr(app.state, "bound_host", None)
+        self._prev_required = getattr(app.state, "auth_required", None)
+        app.state.bound_host = "fly-app.fly.dev"
+        app.state.auth_required = True
+        # Cookieless client → the gate must reject every admin endpoint.
+        self.client = TestClient(app, base_url="https://fly-app.fly.dev")
+        yield
+        clear_providers()
+        app.state.bound_host = self._prev_host
+        app.state.auth_required = self._prev_required
 
     @pytest.mark.parametrize(
         "path",
@@ -923,15 +941,20 @@ class TestDebugShareEndpoint:
         r = self.client.post("/api/ops/debug-share", json={"redact": True})
         assert r.status_code == 502
 
-    def test_requires_session_token(self):
-        # Drop the token header and confirm the global auth gate rejects it.
+    def test_loopback_has_no_identity_gate(self):
+        # After the legacy-token teardown, loopback enforces no identity
+        # gate: the bind is the boundary and the CSRF guard covers
+        # cross-origin mutations. A bogus token is simply ignored, and the
+        # request reaches the handler (any non-401). Identity enforcement
+        # for this endpoint is exercised in gated mode by
+        # TestAdminEndpointsAuthGate.
         bare = self.client
         r = bare.post(
             "/api/ops/debug-share",
             json={"redact": True},
             headers={self.header: "wrong-token"},
         )
-        assert r.status_code == 401
+        assert r.status_code != 401
 
 
 class TestToolsConfigEndpoints:
@@ -1049,7 +1072,11 @@ class TestToolsConfigEndpoints:
         assert body["pid"] == 4321
         assert spawned["subcommand"] == ["tools", "post-setup", "agent_browser"]
 
-    def test_endpoints_require_session_token(self):
+    def test_loopback_endpoints_have_no_identity_gate(self):
+        # Loopback: no identity gate after the legacy-token teardown. A
+        # bogus token is ignored and the request reaches the handler (any
+        # non-401). The gated regime enforces identity (see
+        # TestAdminEndpointsAuthGate).
         for method, path, payload in [
             ("get", "/api/tools/toolsets/web/config", None),
             ("put", "/api/tools/toolsets/web/env", {"env": {}}),
@@ -1060,4 +1087,4 @@ class TestToolsConfigEndpoints:
             if payload is not None:
                 kwargs["json"] = payload
             r = fn(path, **kwargs)
-            assert r.status_code == 401, f"{method} {path} not gated"
+            assert r.status_code != 401, f"{method} {path} unexpectedly gated"
