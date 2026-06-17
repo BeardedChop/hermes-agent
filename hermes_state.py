@@ -722,7 +722,24 @@ class SessionDB:
                     isolation_level=None,
                 )
                 self._conn.row_factory = sqlite3.Row
-                apply_wal_with_fallback(self._conn, db_label="state.db")
+                journal_mode = apply_wal_with_fallback(self._conn, db_label="state.db")
+                # Durability hardening (NS-506). On memory/disk-constrained
+                # hosts (e.g. a small Fly machine that OOM-kills or SIGTERMs
+                # the process mid-write, or fills the disk with a large npm
+                # cache), an interrupted write can tear the DB. With WAL,
+                # ``synchronous=NORMAL`` fsyncs the WAL at each checkpoint and
+                # is crash-safe against OS crash / power loss / process kill
+                # (only the very last un-checkpointed transaction can be lost,
+                # never the database file itself) — the SQLite-recommended
+                # setting for WAL. On the DELETE fallback (NFS/SMB/FUSE) we use
+                # FULL, since without WAL only FULL is crash-safe. We also set
+                # an explicit ``busy_timeout`` so a checkpoint/contention spike
+                # doesn't surface as an immediate "database is locked".
+                if journal_mode == "wal":
+                    self._conn.execute("PRAGMA synchronous=NORMAL")
+                else:
+                    self._conn.execute("PRAGMA synchronous=FULL")
+                self._conn.execute("PRAGMA busy_timeout=2000")
                 self._conn.execute("PRAGMA foreign_keys=ON")
                 self._init_schema()
 
