@@ -12,7 +12,10 @@ iron-proxy is a TLS-intercepting egress firewall (Apache-2.0, Go binary, by
 ironsh).  It sits between the sandbox and the internet, enforces a default-deny
 allowlist on outbound hosts, and *swaps proxy tokens for real credentials*
 on the way out.  The sandbox only ever holds opaque proxy tokens — leaking
-them is useless, since they only work from behind the proxy.
+them is useless, since they only work behind the configured trusted proxy
+boundary (the CA private key and proxy endpoint integrity are part of that
+boundary: if traffic can be redirected to attacker-controlled proxy
+infrastructure, the guarantee no longer holds).
 
 Design summary
 --------------
@@ -90,6 +93,12 @@ _IRON_PROXY_RELEASE_BASE = (
     f"https://github.com/ironsh/iron-proxy/releases/download/v{_IRON_PROXY_VERSION}"
 )
 _IRON_PROXY_CHECKSUM_NAME = "checksums.txt"
+# Detached signature for checksums.txt + the signing public key, both shipped on
+# the release. Used for optional GPG verification of the release channel
+# (maxpetrusenko P1): SHA-256 only protects the archive if checksums.txt itself
+# came from an uncompromised channel; verifying its signature closes that gap.
+_IRON_PROXY_CHECKSUM_SIG_NAME = "checksums.txt.asc"
+_IRON_PROXY_PUBKEY_NAME = "public-key.asc"
 
 # How long to wait for HTTP downloads and subprocess interactions, in seconds.
 _DOWNLOAD_TIMEOUT = 120  # binary is ~16MB
@@ -436,6 +445,15 @@ def install_iron_proxy(*, force: bool = False) -> Path:
         _http_download(asset_url, archive_path)
         _http_download(checksum_url, checksum_path)
 
+        # Defense-in-depth (maxpetrusenko P1): verify the GPG signature of
+        # checksums.txt before trusting it. The archive download honors ambient
+        # proxy env (urllib), so a compromised channel could serve a matching
+        # binary + checksums pair; the detached signature + pinned public key
+        # close that release-channel tamper gap. Best-effort: if gpg or the
+        # signature assets aren't available we log and fall back to the SHA-256
+        # check alone rather than hard-failing offline installs.
+        _verify_checksums_signature(tmp, checksum_path)
+
         expected = _expected_sha256(checksum_path, asset_name)
         actual = _sha256_file(archive_path)
         if expected.lower() != actual.lower():
@@ -491,6 +509,79 @@ def _http_download(url: str, dest: Path) -> None:
                 shutil.copyfileobj(resp, f)
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Failed to download {url}: {exc}") from exc
+
+
+def _verify_checksums_signature(tmp: Path, checksum_path: Path) -> bool:
+    """Best-effort GPG verification of ``checksums.txt`` (maxpetrusenko P1).
+
+    Downloads the detached signature (``checksums.txt.asc``) and the release
+    signing key (``public-key.asc``), imports the key into an ephemeral
+    keyring, and verifies the signature over ``checksum_path``.
+
+    Returns True when the signature is verified. Returns False (with a warning)
+    when verification is unavailable — ``gpg`` not installed, or the signature /
+    public-key assets are missing from the release. Raises RuntimeError ONLY
+    when verification actively FAILS (a present-but-bad signature), which is a
+    tamper signal we must not ignore.
+
+    Rationale for graceful degradation on "unavailable": the SHA-256 check
+    against ``checksums.txt`` remains in force regardless, and many install
+    hosts (CI, minimal containers) won't have gpg. We harden when we can and
+    never make gpg a hard dependency for a working install.
+    """
+    gpg = shutil.which("gpg")
+    if not gpg:
+        logger.warning(
+            "gpg not found on PATH — skipping iron-proxy release-signature "
+            "verification (SHA-256 checksum check still enforced)."
+        )
+        return False
+
+    sig_url = f"{_IRON_PROXY_RELEASE_BASE}/{_IRON_PROXY_CHECKSUM_SIG_NAME}"
+    pubkey_url = f"{_IRON_PROXY_RELEASE_BASE}/{_IRON_PROXY_PUBKEY_NAME}"
+    sig_path = tmp / _IRON_PROXY_CHECKSUM_SIG_NAME
+    pubkey_path = tmp / _IRON_PROXY_PUBKEY_NAME
+
+    try:
+        _http_download(sig_url, sig_path)
+        _http_download(pubkey_url, pubkey_path)
+    except RuntimeError as exc:
+        logger.warning(
+            "iron-proxy release signature assets unavailable (%s) — skipping "
+            "GPG verification (SHA-256 checksum check still enforced).", exc,
+        )
+        return False
+
+    # Ephemeral keyring so we never touch the user's real GPG home.
+    gnupg_home = tmp / "gnupg"
+    gnupg_home.mkdir(mode=0o700, exist_ok=True)
+    base_cmd = [gpg, "--homedir", str(gnupg_home), "--batch", "--no-tty"]
+
+    imp = subprocess.run(  # noqa: S603 — gpg path from trusted PATH lookup
+        [*base_cmd, "--import", str(pubkey_path)],
+        capture_output=True, timeout=60,
+    )
+    if imp.returncode != 0:
+        logger.warning(
+            "Could not import iron-proxy signing key — skipping GPG "
+            "verification (SHA-256 still enforced): %s",
+            imp.stderr.decode("utf-8", "replace")[:200],
+        )
+        return False
+
+    verify = subprocess.run(  # noqa: S603
+        [*base_cmd, "--verify", str(sig_path), str(checksum_path)],
+        capture_output=True, timeout=60,
+    )
+    if verify.returncode != 0:
+        # A present signature that does NOT verify is a tamper signal — fail hard.
+        raise RuntimeError(
+            "iron-proxy checksums.txt failed GPG signature verification — "
+            "refusing to install (possible release-channel tampering). "
+            f"gpg: {verify.stderr.decode('utf-8', 'replace')[:300]}"
+        )
+    logger.info("Verified iron-proxy checksums.txt GPG signature.")
+    return True
 
 
 def _expected_sha256(checksum_file: Path, asset_name: str) -> str:
@@ -874,6 +965,16 @@ def build_proxy_config(
                 # don't want body inspection forced for every request.
                 "match_query": True,
                 "match_body": False,
+                # Fail closed (maxpetrusenko P1): when a request reaches an
+                # allowlisted upstream WITHOUT the proxy token present in a
+                # matched location, reject it instead of forwarding as-is.
+                # Without this, a real provider key that a sandbox process
+                # sent directly (not via the minted token) would still pass
+                # the proxy boundary to the allowed host. With require=true,
+                # iron-proxy returns ActionReject when no token swap fired
+                # (v0.39 secrets transform: replaceConfig.Require, enforced in
+                # TransformRequest — verified present in the pinned version).
+                "require": True,
             },
             "rules": [{"host": h} for h in m.upstream_hosts],
         })

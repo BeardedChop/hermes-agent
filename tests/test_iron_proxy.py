@@ -125,6 +125,10 @@ def test_build_proxy_config_shape(tmp_path):
     # The proxy token is the replacement target.
     assert rule["replace"]["proxy_value"] == m.proxy_token
     assert "Authorization" in rule["replace"]["match_headers"]
+    # Fail-closed: a request to a mapped host without the proxy token must be
+    # rejected, not forwarded with whatever credential it carried
+    # (maxpetrusenko P1). iron-proxy's replaceConfig.Require enforces this.
+    assert rule["replace"]["require"] is True
     # Rules list contains one entry per upstream host.
     rule_hosts = {r["host"] for r in rule["rules"]}
     assert rule_hosts == set(m.upstream_hosts)
@@ -563,6 +567,86 @@ def test_install_iron_proxy_rejects_missing_checksum_entry(hermes_home, monkeypa
 
     monkeypatch.setattr(ip, "_http_download", fake_download)
     with pytest.raises(RuntimeError, match="No checksum entry"):
+        ip.install_iron_proxy()
+
+
+# ── GPG release-signature verification (maxpetrusenko P1) ────────────────────
+
+def test_verify_checksums_signature_skips_without_gpg(hermes_home, monkeypatch, tmp_path):
+    """No gpg on PATH → degrade gracefully (return False), do not raise."""
+    monkeypatch.setattr(ip.shutil, "which", lambda name: None)
+    cks = tmp_path / "checksums.txt"
+    cks.write_text("abc  iron-proxy.tar.gz\n")
+    assert ip._verify_checksums_signature(tmp_path, cks) is False
+
+
+def test_verify_checksums_signature_skips_when_sig_assets_missing(hermes_home, monkeypatch, tmp_path):
+    """gpg present but the release ships no .asc assets → degrade, don't raise."""
+    monkeypatch.setattr(ip.shutil, "which", lambda name: "/usr/bin/gpg" if name == "gpg" else None)
+
+    def fail_download(url: str, dest: Path) -> None:
+        raise RuntimeError("404 not found")
+    monkeypatch.setattr(ip, "_http_download", fail_download)
+    cks = tmp_path / "checksums.txt"
+    cks.write_text("abc  iron-proxy.tar.gz\n")
+    assert ip._verify_checksums_signature(tmp_path, cks) is False
+
+
+def test_verify_checksums_signature_raises_on_bad_signature(hermes_home, monkeypatch, tmp_path):
+    """A present-but-INVALID signature is a tamper signal → must raise."""
+    monkeypatch.setattr(ip.shutil, "which", lambda name: "/usr/bin/gpg" if name == "gpg" else None)
+    monkeypatch.setattr(ip, "_http_download", lambda url, dest: dest.write_bytes(b"asc"))
+
+    class _R:
+        def __init__(self, rc): self.returncode = rc; self.stderr = b"BAD signature"
+    def fake_run(cmd, **kw):
+        # import succeeds (rc 0), verify fails (rc 1)
+        return _R(0) if "--import" in cmd else _R(1)
+    monkeypatch.setattr(ip.subprocess, "run", fake_run)
+
+    cks = tmp_path / "checksums.txt"
+    cks.write_text("abc  iron-proxy.tar.gz\n")
+    with pytest.raises(RuntimeError, match="failed GPG signature verification"):
+        ip._verify_checksums_signature(tmp_path, cks)
+
+
+def test_verify_checksums_signature_passes_on_good_signature(hermes_home, monkeypatch, tmp_path):
+    """Valid signature → returns True."""
+    monkeypatch.setattr(ip.shutil, "which", lambda name: "/usr/bin/gpg" if name == "gpg" else None)
+    monkeypatch.setattr(ip, "_http_download", lambda url, dest: dest.write_bytes(b"asc"))
+
+    class _R:
+        def __init__(self, rc): self.returncode = rc; self.stderr = b""
+    monkeypatch.setattr(ip.subprocess, "run", lambda cmd, **kw: _R(0))
+
+    cks = tmp_path / "checksums.txt"
+    cks.write_text("abc  iron-proxy.tar.gz\n")
+    assert ip._verify_checksums_signature(tmp_path, cks) is True
+
+
+def test_install_aborts_on_bad_release_signature(hermes_home, monkeypatch):
+    """End-to-end: a tampered (bad-signature) release must abort install."""
+    fake_payload = _make_fake_tar(ip._platform_binary_name())
+    import hashlib
+    sha = hashlib.sha256(fake_payload).hexdigest()
+    asset_name = ip._platform_asset_name()
+
+    def fake_download(url: str, dest: Path) -> None:
+        if url.endswith(ip._IRON_PROXY_CHECKSUM_NAME):
+            dest.write_text(f"{sha}  {asset_name}\n")
+        elif url.endswith(".asc"):
+            dest.write_bytes(b"-----BEGIN PGP-----\n")
+        else:
+            dest.write_bytes(fake_payload)
+    monkeypatch.setattr(ip, "_http_download", fake_download)
+    monkeypatch.setattr(ip.shutil, "which", lambda name: "/usr/bin/gpg" if name == "gpg" else None)
+
+    class _R:
+        def __init__(self, rc): self.returncode = rc; self.stderr = b"BAD"
+    monkeypatch.setattr(ip.subprocess, "run",
+                        lambda cmd, **kw: _R(0) if "--import" in cmd else _R(1))
+
+    with pytest.raises(RuntimeError, match="GPG signature verification"):
         ip.install_iron_proxy()
 
 

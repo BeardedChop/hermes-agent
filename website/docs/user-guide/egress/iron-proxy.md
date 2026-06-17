@@ -2,7 +2,7 @@
 
 When Hermes runs your agent inside a Docker terminal sandbox, that sandbox normally holds your real upstream API keys (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, etc.). A prompt-injected agent in that sandbox can `cat ~/.config/openrouter/auth.json` or `printenv | grep -i key` and exfiltrate them.
 
-The egress proxy fixes this: the sandbox holds opaque **proxy tokens**, never the real keys. All outbound traffic from the sandbox routes through a local [iron-proxy](https://github.com/ironsh/iron-proxy) daemon (Apache-2.0, Go) on the host, which terminates TLS and swaps the proxy token for the real credential before forwarding the request upstream. Compromise the sandbox and the attacker walks away with tokens that only work from behind the proxy.
+The egress proxy fixes this: the sandbox holds opaque **proxy tokens**, never the real keys. All outbound traffic from the sandbox routes through a local [iron-proxy](https://github.com/ironsh/iron-proxy) daemon (Apache-2.0, Go) on the host, which terminates TLS and swaps the proxy token for the real credential before forwarding the request upstream. Compromise the sandbox and the attacker walks away with tokens that only work behind the **configured trusted proxy boundary** — the CA private key and the proxy endpoint integrity are part of that boundary. If traffic can be redirected to attacker-controlled proxy infrastructure (e.g. a stolen CA private key or a hijacked proxy endpoint), the token guarantee no longer holds.
 
 This release wires the egress proxy into the Docker backend only. Modal, Daytona, SSH, and Singularity do **not** receive proxy env vars or CA mounts yet.
 
@@ -437,6 +437,7 @@ If the nonce check fails, the code falls back to matching `argv[0]` basename aga
 **What it does NOT protect against:**
 
 - A compromised host process. If the agent process itself is compromised, real keys in the host's `~/.hermes/.env` are exposed regardless. This is a defense-in-depth feature for *sandbox* compromise, not host compromise.
+- **Loss of the trusted-proxy boundary itself.** The token-swap guarantee assumes the sandbox trusts the mounted CA cert (`/etc/ssl/certs/hermes-egress-ca.crt`) and that traffic actually reaches *our* iron-proxy. If the CA private key is stolen, or sandbox egress is redirected to attacker-controlled proxy infrastructure, an adversary-in-the-middle can present a valid leaf cert and the proxy tokens are no longer a meaningful boundary (cf. [MITRE ATT&CK T1588.004](https://attack.mitre.org/techniques/T1588/004/) — obtained TLS certificate material enabling AiTM). Protect the CA key (it's `0600`, host-only) and the proxy endpoint accordingly.
 - Sandbox processes that bypass `HTTPS_PROXY` by using a raw socket. The proxy can't intercept what doesn't route to it. Node.js is partially mitigated via `NODE_OPTIONS=--use-openssl-ca` (see caveat above).
 - Credential files explicitly mounted into Docker (`terminal.credential_files` or skill-registered mounts). Egress protects provider env vars; it does not inspect arbitrary mounted files. Do not mount real provider credentials into an enforced egress sandbox.
 - Allowlisted-host data exfiltration. If `api.openai.com` is allowed, an agent could embed exfil data in a request body to that host. The daemon log captures the request happened but doesn't prevent it.

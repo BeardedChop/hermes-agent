@@ -358,6 +358,52 @@ def test_docker_env_appears_in_run_command(monkeypatch):
     assert "GNUPGHOME=/root/.gnupg" in run_args_str
 
 
+def _node_options_from_run(calls):
+    run_calls = [c for c in calls if isinstance(c[0], list) and len(c[0]) >= 2 and c[0][1] == "run"]
+    assert run_calls, "docker run should have been called"
+    args = run_calls[0][0]
+    for i, a in enumerate(args):
+        if a == "-e" and i + 1 < len(args) and args[i + 1].startswith("NODE_OPTIONS="):
+            return args[i + 1].split("=", 1)[1]
+    return None
+
+
+def test_egress_node_options_overrides_conflicting_ca_flag(monkeypatch):
+    """maxpetrusenko P1: a conflicting docker_env NODE_OPTIONS CA-mode flag
+    (--use-bundled-ca) must be replaced by the egress-required --use-openssl-ca,
+    not left to survive alongside it (final Node trust would depend on order)."""
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
+    monkeypatch.setattr(
+        docker_env, "_egress_proxy_args_for_docker",
+        lambda: ([], {"_HERMES_EGRESS_NODE_OPTIONS_APPEND": "--use-openssl-ca"}, []),
+    )
+    calls = _mock_subprocess_run(monkeypatch)
+
+    _make_dummy_env(env={"NODE_OPTIONS": "--max-old-space-size=8192 --use-bundled-ca"})
+
+    node_opts = (_node_options_from_run(calls) or "").split()
+    assert "--use-openssl-ca" in node_opts, "egress CA flag must be present"
+    assert "--use-bundled-ca" not in node_opts, "conflicting CA flag must be stripped"
+    # Operator's unrelated tuning must be preserved.
+    assert "--max-old-space-size=8192" in node_opts
+
+
+def test_egress_node_options_preserves_operator_tuning(monkeypatch):
+    """Non-conflicting operator NODE_OPTIONS survive the egress append-merge."""
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
+    monkeypatch.setattr(
+        docker_env, "_egress_proxy_args_for_docker",
+        lambda: ([], {"_HERMES_EGRESS_NODE_OPTIONS_APPEND": "--use-openssl-ca"}, []),
+    )
+    calls = _mock_subprocess_run(monkeypatch)
+
+    _make_dummy_env(env={"NODE_OPTIONS": "--max-old-space-size=4096"})
+
+    node_opts = (_node_options_from_run(calls) or "").split()
+    assert "--use-openssl-ca" in node_opts
+    assert "--max-old-space-size=4096" in node_opts
+
+
 def test_docker_env_appears_in_init_env_args(monkeypatch):
     """Explicit docker_env values should appear in _build_init_env_args."""
     env = _make_execute_only_env()

@@ -1114,15 +1114,31 @@ class DockerEnvironment(BaseEnvironment):
         )
         if _egress_node_append:
             existing_node = merged_env.get("NODE_OPTIONS", "")
+            existing_tokens = existing_node.split()
+            # maxpetrusenko P1: dedupe is not enough — the operator may have set
+            # a CONFLICTING CA-mode flag (e.g. --use-bundled-ca) that would
+            # otherwise survive alongside our --use-openssl-ca, leaving Node's
+            # final trust behavior dependent on option order / Node parsing.
+            # Egress isolation requires our flag to win deterministically, so
+            # strip any known-conflicting CA-mode flags before appending.
+            _CA_MODE_FLAGS = {"--use-openssl-ca", "--use-bundled-ca"}
+            append_token = _egress_node_append.strip()
+            if append_token in _CA_MODE_FLAGS:
+                dropped = [t for t in existing_tokens if t in _CA_MODE_FLAGS and t != append_token]
+                if dropped:
+                    logger.warning(
+                        "Overriding conflicting NODE_OPTIONS CA-mode flag(s) %s "
+                        "with egress-required %s to keep Node routed through the "
+                        "egress CA store.", dropped, append_token,
+                    )
+                existing_tokens = [t for t in existing_tokens if t not in _CA_MODE_FLAGS or t == append_token]
             # De-dup: only add if not already present (the operator may
             # have set the same flag themselves).
-            if _egress_node_append.strip() not in existing_node.split():
-                if existing_node.strip():
-                    merged_env["NODE_OPTIONS"] = (
-                        f"{existing_node} {_egress_node_append}".strip()
-                    )
-                else:
-                    merged_env["NODE_OPTIONS"] = _egress_node_append
+            if append_token not in existing_tokens:
+                existing_tokens.append(append_token)
+            merged_env["NODE_OPTIONS"] = " ".join(existing_tokens).strip()
+            if not merged_env["NODE_OPTIONS"]:
+                merged_env.pop("NODE_OPTIONS", None)
 
         env_args = []
         for key in sorted(merged_env):

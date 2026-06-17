@@ -2545,7 +2545,8 @@ DEFAULT_CONFIG = {
     # today; Modal/SSH in follow-ups) is routed through a managed iron-proxy
     # subprocess.  The sandbox sees opaque proxy tokens; iron-proxy swaps in
     # real API credentials at the egress boundary.  Compromising the sandbox
-    # leaks tokens that only work from behind the proxy.
+    # leaks tokens that only work behind the configured trusted proxy boundary
+    # (CA private key + proxy endpoint integrity are part of that boundary).
     #
     # Configure with `hermes egress setup`.  Disabled by default — the rest of
     # Hermes works exactly as before with `enabled: false`.
