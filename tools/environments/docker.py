@@ -1606,7 +1606,7 @@ class DockerEnvironment(BaseEnvironment):
                 result.returncode, result.stderr.strip(),
             )
             return None
-        lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+        lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
         if not lines:
             return None
         # Multiple matches are unusual (one (task, profile) should produce one

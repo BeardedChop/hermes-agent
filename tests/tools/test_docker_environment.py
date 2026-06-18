@@ -1016,6 +1016,35 @@ def test_find_reusable_container_prefers_running_over_stopped(monkeypatch):
     )
 
 
+def test_find_reusable_handles_empty_label_string(monkeypatch):
+    """Docker CLI v29.5.3 returns an empty string (NOT ``<no value>``)
+    for absent labels.  The trailing tab produces ``cid\\trunning\\t\\n``;
+    we must not strip the trailing tab or the three-field parser drops the
+    container.  Regression test for the egilewski review on #48073."""
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
+    monkeypatch.setattr(docker_env, "_get_active_profile_name", lambda: "default")
+
+    def _run(cmd, **kwargs):
+        if isinstance(cmd, list) and len(cmd) >= 2:
+            if cmd[1] == "version":
+                return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+            if cmd[1] == "ps":
+                # Docker v29.5.3: absent label → empty string, trailing tab
+                return subprocess.CompletedProcess(
+                    cmd, 0,
+                    stdout="safe-cid\trunning\t\n",
+                    stderr="",
+                )
+        return subprocess.CompletedProcess(cmd, 0, stdout="fresh-cid\n", stderr="")
+
+    monkeypatch.setattr(docker_env.subprocess, "run", _run)
+
+    env = _make_dummy_env(task_id="empty-label")
+    assert env._container_id == "safe-cid", (
+        f"container with empty-string label should be reused, got {env._container_id!r}"
+    )
+
+
 def test_reuse_off_rejects_non_off_egress_container(monkeypatch):
     """When egress is off, a container that still has hermes-egress=on
     (e.g. from before ``hermes egress disable``) must be rejected and a
