@@ -76,6 +76,82 @@ def test_consume_is_scoped_to_its_session(home, monkeypatch):
     assert notify_utils.is_notify_pending("sess-a") is True
 
 
+@pytest.mark.parametrize(
+    "env,expected",
+    [
+        ({"TERM_PROGRAM": "iTerm.app"}, "osc9"),
+        ({"TERM_PROGRAM": "WarpTerminal"}, "osc9"),
+        ({"TERM_PROGRAM": "vscode"}, "osc777"),
+        ({"KITTY_WINDOW_ID": "1"}, "osc9"),
+        ({"WEZTERM_PANE": "0"}, "osc777"),
+        ({"TERM_PROGRAM": "Apple_Terminal"}, None),
+        ({}, None),
+    ],
+)
+def test_detect_terminal_osc(monkeypatch, env, expected):
+    for k in ("TERM_PROGRAM", "KITTY_WINDOW_ID", "WEZTERM_PANE",
+              "GHOSTTY_RESOURCES_DIR"):
+        monkeypatch.delenv(k, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    assert notify_utils._detect_terminal_osc() == expected
+
+
+def test_emit_terminal_notification_writes_osc9(monkeypatch):
+    written = []
+    monkeypatch.setattr(notify_utils, "_detect_terminal_osc", lambda: "osc9")
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.setattr(notify_utils, "_write_tty",
+                        lambda payload: written.append(payload) or True)
+
+    assert notify_utils._emit_terminal_notification("Hermes", "done") is True
+    assert written == ["\033]9;Hermes: done\007"]
+
+
+def test_emit_terminal_notification_writes_osc777(monkeypatch):
+    written = []
+    monkeypatch.setattr(notify_utils, "_detect_terminal_osc", lambda: "osc777")
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.setattr(notify_utils, "_write_tty",
+                        lambda payload: written.append(payload) or True)
+
+    assert notify_utils._emit_terminal_notification("Hermes", "done") is True
+    assert written == ["\033]777;notify;Hermes;done\007"]
+
+
+def test_emit_terminal_notification_unknown_terminal_returns_false(monkeypatch):
+    monkeypatch.setattr(notify_utils, "_detect_terminal_osc", lambda: None)
+    called = []
+    monkeypatch.setattr(notify_utils, "_write_tty",
+                        lambda payload: called.append(payload) or True)
+
+    assert notify_utils._emit_terminal_notification("Hermes", "done") is False
+    assert called == []  # no tty write attempted
+
+
+def test_emit_terminal_notification_wraps_for_tmux(monkeypatch):
+    written = []
+    monkeypatch.setattr(notify_utils, "_detect_terminal_osc", lambda: "osc9")
+    monkeypatch.setenv("TMUX", "/tmp/tmux-1000/default,123,0")
+    monkeypatch.setattr(notify_utils, "_write_tty",
+                        lambda payload: written.append(payload) or True)
+
+    notify_utils._emit_terminal_notification("Hermes", "done")
+    assert written and written[0].startswith("\033Ptmux;")
+    assert written[0].endswith("\033\\")
+
+
+def test_desktop_notification_prefers_terminal_over_os(monkeypatch):
+    """Terminal OSC short-circuits the OS-level fallbacks."""
+    monkeypatch.setattr(notify_utils, "_emit_terminal_notification",
+                        lambda t, m: True)
+    macos_called = []
+    monkeypatch.setattr(notify_utils, "_show_notification_macos",
+                        lambda t, m: macos_called.append((t, m)))
+    notify_utils._show_desktop_notification("T", "M")
+    assert macos_called == []
+
+
 def test_macos_prefers_terminal_notifier_when_present(monkeypatch):
     runs = []
     monkeypatch.setattr(notify_utils.shutil, "which",

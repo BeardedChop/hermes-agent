@@ -10,6 +10,7 @@ preferring notify-send via WSLg when available).
 
 import hashlib
 import logging
+import os
 import platform
 import shutil
 import subprocess
@@ -228,13 +229,98 @@ def _show_notification_macos(title: str, message: str) -> None:
         logger.debug("notify: osascript notification failed: %s", e)
 
 
+# ---------------------------------------------------------------------------
+# Terminal-native notifications (OSC escape sequences)
+# ---------------------------------------------------------------------------
+#
+# The most reliable way to notify from an unsigned CLI — especially on modern
+# macOS, where ``osascript`` notifications are permanently stuck under the
+# "Script Editor" identity (Apple removed sender override in Monterey) and
+# ``terminal-notifier`` is broken on recent releases. Here the *terminal
+# emulator itself* raises the banner: it's attributed to the terminal (which
+# the user already trusts), clicking it focuses the terminal, and there's no
+# extra dependency.
+#
+# We emit the escape sequence directly to the controlling terminal
+# (``/dev/tty``), NOT stdout — the TUI/slash-worker capture stdout, and the
+# sequences are non-rendering so they don't disturb a live TUI screen.
+#
+# Two flavors cover the field (see terminfo.dev): OSC 9 (iTerm2-style, single
+# string) and OSC 777 (urxvt-style, title+body). We pick ONE per terminal via
+# TERM_PROGRAM/env so a terminal that supports both doesn't double-fire.
+# Apple Terminal ignores both → returns False so the caller falls back.
+
+def _detect_terminal_osc() -> Optional[str]:
+    """Return the OSC notification flavor for the current terminal, or None.
+
+    None means "unknown / unsupported (e.g. Apple Terminal)" — the caller
+    should fall back to an OS-level notifier.
+    """
+    if os.environ.get("KITTY_WINDOW_ID"):
+        return "osc9"  # kitty also speaks the legacy OSC 9
+    if os.environ.get("WEZTERM_PANE") or os.environ.get("GHOSTTY_RESOURCES_DIR"):
+        return "osc777"
+    tp = os.environ.get("TERM_PROGRAM", "")
+    return {
+        "iTerm.app": "osc9",
+        "WarpTerminal": "osc9",
+        "Hyper": "osc9",
+        "ghostty": "osc777",
+        "vscode": "osc777",  # VS Code AND Cursor integrated terminals
+    }.get(tp)
+
+
+def _tmux_wrap(seq: str) -> str:
+    """Wrap an escape sequence for tmux passthrough so it reaches the outer
+    terminal. Requires ``set -g allow-passthrough on`` in tmux >= 3.3."""
+    return "\033Ptmux;" + seq.replace("\033", "\033\033") + "\033\\"
+
+
+def _emit_terminal_notification(title: str, message: str) -> bool:
+    """Emit an OSC desktop-notification sequence to the controlling terminal.
+
+    Returns True when written to a terminal known to support it. Fully
+    fail-safe.
+    """
+    kind = _detect_terminal_osc()
+    if not kind:
+        return False
+    if kind == "osc777":
+        seq = f"\033]777;notify;{title};{message}\007"
+    else:  # osc9 — single string
+        seq = f"\033]9;{title}: {message}\007" if title else f"\033]9;{message}\007"
+    if os.environ.get("TMUX"):
+        seq = _tmux_wrap(seq)
+    if _write_tty(seq):
+        logger.debug("notify: terminal notification sent via %s", kind)
+        return True
+    return False
+
+
+def _write_tty(payload: str) -> bool:
+    """Write *payload* to the controlling terminal (/dev/tty). Fail-safe."""
+    try:
+        with open("/dev/tty", "w") as tty:
+            tty.write(payload)
+            tty.flush()
+        return True
+    except Exception as e:
+        logger.debug("notify: /dev/tty write failed: %s", e)
+        return False
+
+
 def _show_desktop_notification(title: str, message: str) -> None:
     """Show a desktop notification bubble.
 
-    WSL path: prefer notify-send via WSLg (native Windows toasts),
-    fall back to PowerShell balloon tip.
+    Order of preference:
+    1. Terminal-native OSC sequence (works in iTerm2/Ghostty/kitty/WezTerm/
+       Warp/VS Code/Cursor; reliable for an unsigned CLI on modern macOS).
+    2. OS-level fallback per platform (notify-send / terminal-notifier /
+       osascript / PowerShell). Used for Apple Terminal and unknown terminals.
     """
     try:
+        if _emit_terminal_notification(title, message):
+            return
         if _is_wsl():
             # WSLg path: notify-send bridges to native Windows notifications
             if _notify_send_available():
