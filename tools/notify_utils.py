@@ -8,6 +8,7 @@ Windows (PowerShell), and WSL (bridges to Windows via powershell.exe,
 preferring notify-send via WSLg when available).
 """
 
+import hashlib
 import logging
 import platform
 import shutil
@@ -46,17 +47,52 @@ def _is_wsl() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Sentinel file
+# Sentinel file (per-session)
 # ---------------------------------------------------------------------------
+#
+# The pending-notify flag is scoped to a *session*, not the whole process.
+# The TUI gateway and dashboard serve many concurrent sessions from one
+# process sharing one HERMES_HOME; a single global sentinel would let a
+# ``/notify`` set in session A fire on session B's turn completion. Keying
+# the sentinel by HERMES_SESSION_KEY keeps each session's pending flag
+# independent. Classic single-process CLI has no session key and falls back
+# to the unsuffixed default file — same behavior as before.
 
-def get_notify_sentinel_path() -> Path:
-    return _hermes_home() / ".notify_pending"
+
+def _resolve_session_key(session_key: Optional[str]) -> str:
+    """Resolve the session key for the current context.
+
+    Explicit *session_key* wins (used by the TUI gateway, which serves many
+    sessions from one process and must name them explicitly). Otherwise read
+    ``HERMES_SESSION_KEY`` from the session context — a contextvar bound
+    per-turn in the gateway, or ``os.environ`` in the classic CLI and the
+    slash worker. Falls back to ``""`` (the default sentinel).
+    """
+    if session_key is not None:
+        return session_key
+    try:
+        from gateway.session_context import get_session_env
+        return get_session_env("HERMES_SESSION_KEY", "") or ""
+    except Exception:
+        return ""
 
 
-def set_notify_flag() -> bool:
+def _sentinel_name(session_key: str) -> str:
+    key = (session_key or "").strip()
+    if not key:
+        return ".notify_pending"
+    digest = hashlib.sha1(key.encode("utf-8", "replace")).hexdigest()[:16]
+    return f".notify_pending-{digest}"
+
+
+def get_notify_sentinel_path(session_key: Optional[str] = None) -> Path:
+    return _hermes_home() / _sentinel_name(_resolve_session_key(session_key))
+
+
+def set_notify_flag(session_key: Optional[str] = None) -> bool:
     """Write the sentinel file to signal a pending notification."""
     try:
-        p = get_notify_sentinel_path()
+        p = get_notify_sentinel_path(session_key)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.touch()
         return True
@@ -65,10 +101,10 @@ def set_notify_flag() -> bool:
         return False
 
 
-def clear_notify_flag() -> bool:
+def clear_notify_flag(session_key: Optional[str] = None) -> bool:
     """Remove the sentinel file (cancel or consume notification)."""
     try:
-        p = get_notify_sentinel_path()
+        p = get_notify_sentinel_path(session_key)
         if not p.exists():
             return False
         p.unlink()
@@ -78,9 +114,9 @@ def clear_notify_flag() -> bool:
         return False
 
 
-def is_notify_pending() -> bool:
-    """Check if a notification is pending."""
-    return get_notify_sentinel_path().exists()
+def is_notify_pending(session_key: Optional[str] = None) -> bool:
+    """Check if a notification is pending for this session."""
+    return get_notify_sentinel_path(session_key).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +241,6 @@ def _show_desktop_notification(title: str, message: str) -> None:
 # ---------------------------------------------------------------------------
 
 def fire_notification(
-    config: Optional[dict] = None,
     *,
     title: str = "Hermes Agent",
     message: str = "Task complete",
@@ -216,7 +251,6 @@ def fire_notification(
     crash the idle loop.
 
     Args:
-        config: Optional config dict.  Reads from config.yaml when None.
         title: Desktop notification title.
         message: Desktop notification body.
     """
@@ -230,3 +264,26 @@ def fire_approval_request_notification() -> None:
     turn-complete notification should still fire after the user responds.
     """
     fire_notification(message="Input needed: approval required")
+
+
+def consume_pending_notification(
+    session_key: Optional[str] = None,
+    *,
+    title: str = "Hermes Agent",
+    message: str = "Task complete",
+) -> bool:
+    """Fire-and-clear the pending notification for *session_key*, if any.
+
+    Single entry point for the turn-complete sites (CLI idle loop, CLI
+    process loop, TUI gateway success/error paths) so the
+    check→clear→fire sequence lives in one place. Returns True when a
+    notification was fired. Fully fail-safe.
+    """
+    try:
+        if is_notify_pending(session_key):
+            clear_notify_flag(session_key)
+            fire_notification(title=title, message=message)
+            return True
+    except Exception as e:
+        logger.debug("notify consume failed: %s", e)
+    return False

@@ -10442,14 +10442,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             # Must run BEFORE goal continuation so the notification
             # reflects actual turn completion (mirrors the TUI path).
             try:
-                from tools.notify_utils import (
-                    is_notify_pending,
-                    clear_notify_flag,
-                    fire_notification,
-                )
-                if is_notify_pending():
-                    clear_notify_flag()
-                    fire_notification()
+                from tools.notify_utils import consume_pending_notification
+                consume_pending_notification()
             except Exception as e:
                 logging.debug("notify idle-check failed: %s", e)
 
@@ -13131,14 +13125,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                         # reflects the actual turn completion, not a
                         # potentially-auto-continued turn.
                         try:
-                            from tools.notify_utils import (
-                                is_notify_pending,
-                                clear_notify_flag,
-                                fire_notification,
-                            )
-                            if is_notify_pending():
-                                clear_notify_flag()
-                                fire_notification()
+                            from tools.notify_utils import consume_pending_notification
+                            consume_pending_notification()
                         except Exception as e:
                             logging.debug("notify idle-check failed: %s", e)
 
