@@ -326,18 +326,22 @@ export interface DesktopConnectionConfig {
   // The profile this config describes, or null for the global/default
   // connection. Per-profile entries let a profile point at its own backend.
   profile: null | string
-  remoteAuthMode?: 'oauth' | 'token'
-  remoteOauthConnected?: boolean
-  remoteTokenPreview?: string | null
+  // Remote-auth fields are always present (the sanitizer fills defaults even in
+  // local/ssh mode) so consumers can read them without optional-narrowing.
+  remoteAuthMode: 'oauth' | 'token'
+  remoteOauthConnected: boolean
+  remoteTokenPreview: string | null
   remoteTokenSet: boolean
-  remoteUrl?: string
-  // SSH mode fields (present when mode === 'ssh'). No token is surfaced — the
-  // dashboard session token is an internal artifact reconciled at bootstrap.
-  sshHost?: string
-  sshUser?: string
-  sshPort?: number | null
-  sshKeyPath?: string
-  sshRemoteHermesPath?: string
+  remoteUrl: string
+  // SSH mode fields. Always present on the contract (empty strings / null in
+  // local/remote mode, populated when mode === 'ssh') so the renderer never
+  // optional-narrows. No token is surfaced — the dashboard session token is an
+  // internal artifact reconciled at bootstrap.
+  sshHost: string
+  sshUser: string
+  sshPort: number | null
+  sshKeyPath: string
+  sshRemoteHermesPath: string
 }
 
 export interface DesktopConnectionConfigInput {

@@ -4449,6 +4449,13 @@ async function sanitizeDesktopConnectionConfig(config = readDesktopConnectionCon
       sshPort: sshConfig?.port || null,
       sshKeyPath: sshConfig?.keyPath || '',
       sshRemoteHermesPath: sshConfig?.remoteHermesPath || '',
+      // Remote-auth fields are not meaningful in SSH mode (the dashboard token
+      // is internal), but the renderer contract always carries them — return
+      // inert defaults so consumers never optional-narrow.
+      remoteAuthMode: 'token',
+      remoteOauthConnected: false,
+      remoteUrl: '',
+      remoteTokenPreview: null,
       remoteTokenSet: Boolean(decryptDesktopSecret(block.token)),
       envOverride: false
     }
@@ -4481,6 +4488,13 @@ async function sanitizeDesktopConnectionConfig(config = readDesktopConnectionCon
     remoteUrl,
     remoteTokenPreview: tokenPreview(remoteToken),
     remoteTokenSet: Boolean(remoteToken),
+    // SSH fields are always present on the contract (empty in local/remote mode)
+    // so the renderer never optional-narrows; populated only in the ssh branch.
+    sshHost: '',
+    sshUser: '',
+    sshPort: null,
+    sshKeyPath: '',
+    sshRemoteHermesPath: '',
     // The env override only forces the global/primary connection; a per-profile
     // scope is never overridden by HERMES_DESKTOP_REMOTE_URL.
     envOverride
