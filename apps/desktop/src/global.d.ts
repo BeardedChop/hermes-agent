@@ -289,6 +289,9 @@ export interface HermesConnection {
   // is the user@host the tunnel reaches; for token/oauth remotes it's the host
   // parsed from the real backend URL. Absent in local mode.
   remoteHost?: string
+  // Distinguishes an SSH-tunnelled remote ('ssh') from a direct URL remote
+  // ('url') so the pill can label it SSH: vs Remote:. Absent in local mode.
+  remoteKind?: 'ssh' | 'url'
   nativeOverlayWidth: number
   source?: 'env' | 'local' | 'settings'
   token: string

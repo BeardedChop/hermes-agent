@@ -1255,6 +1255,10 @@ export interface Translations {
       backendVersion: (version: string) => string
       clientLabel: (version: string) => string
       backendLabel: (version: string) => string
+      connectionSsh: (host: string) => string
+      connectionRemote: (host: string) => string
+      connectionSshTooltip: (host: string) => string
+      connectionRemoteTooltip: (host: string) => string
       commit: (sha: string) => string
       branch: (branch: string) => string
       closeCommandCenter: string

@@ -4578,7 +4578,7 @@ function buildSshBlock(input, existingBlock = {}) {
 // and is shared by the per-profile, env, and global resolution paths. `token`
 // is the DECRYPTED static token (or null in OAuth mode). `source` is a label
 // for diagnostics ('profile' | 'env' | 'settings').
-async function buildRemoteConnection(rawUrl, authMode, token, source, remoteHost) {
+async function buildRemoteConnection(rawUrl, authMode, token, source, remoteHost, remoteKind = 'url') {
   const baseUrl = normalizeRemoteBaseUrl(rawUrl)
   // For token/oauth remotes the meaningful host is the real backend URL; for
   // SSH remotes the caller passes the entered/resolved host explicitly (the
@@ -4621,6 +4621,7 @@ async function buildRemoteConnection(rawUrl, authMode, token, source, remoteHost
       source,
       authMode: 'oauth',
       remoteHost: host || undefined,
+      remoteKind,
       // No static token in OAuth mode; REST is cookie-authed via the partition.
       token: null,
       wsUrl: buildGatewayWsUrlWithTicket(baseUrl, ticket)
@@ -4640,6 +4641,7 @@ async function buildRemoteConnection(rawUrl, authMode, token, source, remoteHost
     source,
     authMode: 'token',
     remoteHost: host || undefined,
+    remoteKind,
     token,
     wsUrl: buildGatewayWsUrl(baseUrl, token)
   }
@@ -4774,7 +4776,7 @@ async function bootstrapSshConnection(profile, sshConfig, reuseToken, source) {
 
   // Hand the existing token-remote machinery the loopback baseUrl. The pill's
   // host is the SSH host, NOT 127.0.0.1.
-  return buildRemoteConnection(result.baseUrl, 'token', result.token, source, hostLabel)
+  return buildRemoteConnection(result.baseUrl, 'token', result.token, source, hostLabel, 'ssh')
 }
 
 // Save the served token back into the SSH connection entry (encrypted), so a

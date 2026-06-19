@@ -13,6 +13,7 @@ import {
   Command,
   Hash,
   Loader2,
+  Network,
   Sparkles,
   Terminal,
   Zap,
@@ -47,7 +48,7 @@ import {
 } from '@/store/updates'
 import type { StatusResponse } from '@/types/hermes'
 
-import { CRON_ROUTE } from '../../routes'
+import { CRON_ROUTE, SETTINGS_ROUTE } from '../../routes'
 import type { StatusbarItem, StatusbarSelectModifiers } from '../statusbar-controls'
 
 interface StatusbarItemsOptions {
@@ -291,6 +292,44 @@ export function useStatusbarItems({
     copy
   ])
 
+  // Connection-identity pill (VS Code's load-bearing "where am I?" cue). Shown
+  // only for remote connections; hidden in local mode (the unmarked default).
+  // SSH remotes read "SSH: user@host"; token/oauth remotes read "Remote: host"
+  // — closing the same gap for the existing remote modes. Clicking opens the
+  // gateway connection settings so the pill doubles as the switch/disconnect
+  // entry point.
+  const connectionItem = useMemo<StatusbarItem | null>(() => {
+    if (connection?.mode !== 'remote') {
+      return null
+    }
+    // Prefer the host main.cjs put on the descriptor; fall back to parsing the
+    // backend URL (never the 127.0.0.1 tunnel — that's only the SSH baseUrl,
+    // and SSH descriptors always carry remoteHost).
+    let host = connection.remoteHost ?? ''
+    if (!host && connection.baseUrl) {
+      try {
+        host = new URL(connection.baseUrl).host
+      } catch {
+        host = ''
+      }
+    }
+    if (!host) {
+      return null
+    }
+
+    const isSsh = connection.remoteKind === 'ssh'
+    const label = isSsh ? copy.connectionSsh(host) : copy.connectionRemote(host)
+
+    return {
+      icon: <Network className="size-3" />,
+      id: 'connection',
+      label,
+      title: isSsh ? copy.connectionSshTooltip(host) : copy.connectionRemoteTooltip(host),
+      to: SETTINGS_ROUTE,
+      variant: 'link'
+    }
+  }, [connection?.mode, connection?.remoteHost, connection?.remoteKind, connection?.baseUrl, copy])
+
   const coreLeftStatusbarItems = useMemo<readonly StatusbarItem[]>(
     () => [
       {
@@ -421,6 +460,7 @@ export function useStatusbarItems({
         title: terminalTakeover ? copy.hideTerminal : copy.showTerminal,
         variant: 'action'
       },
+      ...(connectionItem ? [connectionItem] : []),
       clientVersionItem,
       ...(backendVersionItem ? [backendVersionItem] : [])
     ],
@@ -435,6 +475,7 @@ export function useStatusbarItems({
       terminalTakeover,
       toggleYolo,
       turnStartedAt,
+      connectionItem,
       clientVersionItem,
       backendVersionItem,
       yoloActive
