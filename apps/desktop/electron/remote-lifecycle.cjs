@@ -252,10 +252,12 @@ function buildSpawnCommand(hermesPath, profile, token) {
   const logPath = `"$(eval echo ${shq(REMOTE_LOG)})"`
   // --isolated => dedicated loopback dashboard, NOT routed into the host's
   // unified machine dashboard. --port 0 => server picks a free port and prints
-  // HERMES_DASHBOARD_READY port=<n>.
+  // HERMES_DASHBOARD_READY port=<n>. --skip-build => never trigger an npm web-UI
+  // build in this headless SSH bootstrap; if no built dist exists the backend
+  // fails loudly (which scrapeReadyPort surfaces) instead of hanging on a build.
   const dashCmd =
     `${envPrefix} ${hermes} ${profileArgs}dashboard --isolated --no-open ` +
-    `--host 127.0.0.1 --port 0`
+    `--host 127.0.0.1 --port 0 --skip-build`
   return (
     `mkdir -p "$(dirname ${logPath})" && ` +
     `setsid sh -c ${shq(`${dashCmd} </dev/null >> ${logPath} 2>&1 & echo $!`)}`
@@ -395,7 +397,9 @@ async function connect(deps) {
           // the lockfile was written is picked up; the remote pid is alive so
           // a served-token mismatch is benign (our backend regenerated it).
           const token = await adoptServedToken(baseUrl, reuseToken, {
-            childAlive: () => true,
+            // pidAlive was checked above as the reuse gate; reuse it for the
+            // foreign-backend guard rather than asserting () => true.
+            childAlive: () => pidAlive,
             label: 'reused remote dashboard'
           })
           log(`reusing remote dashboard pid=${lock.pid} port=${lock.port}`)
@@ -446,8 +450,13 @@ async function connect(deps) {
 
   // Served-token adoption against the TUNNELED baseUrl — the served token is
   // what /api/ws will accept; the minted token is only the spawn credential.
+  // Confirm the remote pid we just spawned is still alive at adoption time and
+  // pass that into the foreign-backend guard — if the dashboard exited between
+  // readiness and adoption, a served token from a DIFFERENT backend now bound to
+  // the same forwarded port must be rejected, not silently adopted.
+  const spawnedAlive = await remotePidAlive(ssh, pid)
   const token = await adoptServedToken(baseUrl, spawnToken, {
-    childAlive: () => true, // liveness is the remote pid; the tunnel is the client side
+    childAlive: () => spawnedAlive,
     label: 'remote dashboard'
   })
   const tokenFingerprint = fingerprintToken(token)

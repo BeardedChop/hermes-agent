@@ -171,6 +171,7 @@ test('buildSpawnCommand uses --isolated --port 0 --no-open and a detached setsid
   assert.match(cmd, /--isolated/)
   assert.match(cmd, /--no-open/)
   assert.match(cmd, /--host 127\.0\.0\.1 --port 0/)
+  assert.match(cmd, /--skip-build/)
   assert.match(cmd, /--profile/)
   assert.match(cmd, /work/)
   assert.match(cmd, /setsid/)
