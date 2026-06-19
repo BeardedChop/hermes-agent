@@ -319,16 +319,23 @@ export function useStatusbarItems({
 
     const isSsh = connection.remoteKind === 'ssh'
     const label = isSsh ? copy.connectionSsh(host) : copy.connectionRemote(host)
+    const baseTooltip = isSsh ? copy.connectionSshTooltip(host) : copy.connectionRemoteTooltip(host)
+    // Append the per-profile scope when this is a profile-scoped connection, so
+    // the pill discloses WHICH profile the host backs (not just the host).
+    const profile = connection.profile
+    const title = profile ? `${baseTooltip} · ${profile}` : baseTooltip
 
     return {
       icon: <Network className="size-3" />,
       id: 'connection',
       label,
-      title: isSsh ? copy.connectionSshTooltip(host) : copy.connectionRemoteTooltip(host),
-      to: SETTINGS_ROUTE,
+      title,
+      // Deep-link straight to the Gateway connection panel (the settings index
+      // reads ?tab=), so the pill lands the user where they manage/switch it.
+      to: `${SETTINGS_ROUTE}?tab=gateway`,
       variant: 'link'
     }
-  }, [connection?.mode, connection?.remoteHost, connection?.remoteKind, connection?.baseUrl, copy])
+  }, [connection?.mode, connection?.remoteHost, connection?.remoteKind, connection?.baseUrl, connection?.profile, copy])
 
   const coreLeftStatusbarItems = useMemo<readonly StatusbarItem[]>(
     () => [
