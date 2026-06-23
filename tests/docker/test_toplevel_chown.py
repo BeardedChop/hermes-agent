@@ -9,9 +9,12 @@ Build the real image and verify the actual runtime behavior:
 """
 from __future__ import annotations
 
-import subprocess
-
-from tests.docker.conftest import docker_exec, docker_exec_sh, wait_for_container_ready
+from tests.docker.conftest import (
+    docker_exec,
+    docker_exec_sh,
+    restart_container,
+    start_container,
+)
 
 
 # The files the stage2 hook should repair (mirrors the allowlist in
@@ -23,12 +26,7 @@ def test_root_owned_state_files_repaired_on_boot(
     built_image: str, container_name: str,
 ) -> None:
     """Root-owned top-level state files must be chowned to hermes on boot."""
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name)
 
     # Create root-owned state files to simulate docker exec (root) writes
     for f in ALLOWLISTED_FILES:
@@ -47,11 +45,7 @@ def test_root_owned_state_files_repaired_on_boot(
         assert line == "root", f"expected root-owned, got: {line}"
 
     # Restart - stage2 should repair ownership
-    subprocess.run(
-        ["docker", "restart", container_name],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    restart_container(container_name)
 
     # Verify files are now hermes-owned
     r = docker_exec_sh(
@@ -71,12 +65,7 @@ def test_non_allowlisted_host_file_not_touched(
     """A non-allowlisted host-owned file must NOT be chowned, even if
     root-owned. Regression guard for #19788 / #19795: a bind-mounted
     $HERMES_HOME may contain host-owned files Hermes does not manage."""
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name)
 
     # Create a non-allowlisted file as root
     docker_exec(
@@ -90,11 +79,7 @@ def test_non_allowlisted_host_file_not_touched(
     )
 
     # Restart
-    subprocess.run(
-        ["docker", "restart", container_name],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    restart_container(container_name)
 
     # The file must STILL be root-owned (not touched by stage2)
     r = docker_exec_sh(

@@ -10,9 +10,12 @@ Build the real image and verify at runtime:
 """
 from __future__ import annotations
 
-import subprocess
-
-from tests.docker.conftest import docker_exec, docker_exec_sh, wait_for_container_ready
+from tests.docker.conftest import (
+    docker_exec,
+    docker_exec_sh,
+    restart_container,
+    start_container,
+)
 
 
 def test_install_tree_not_writable_by_hermes(
@@ -24,12 +27,7 @@ def test_install_tree_not_writable_by_hermes(
     root-owned and non-writable so an agent session cannot self-modify
     the installation and brick the gateway.
     """
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name)
 
     r = docker_exec_sh(
         container_name,
@@ -61,12 +59,7 @@ def test_hermes_disable_lazy_installs_and_dont_write_bytecode(
     """The container must set PYTHONDONTWRITEBYTECODE and
     HERMES_DISABLE_LAZY_INSTALLS=1 so no .pyc files are written to the
     immutable install tree and no lazy installs attempt to modify it."""
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name)
 
     r = docker_exec_sh(
         container_name,
@@ -86,12 +79,7 @@ def test_install_method_stamp_is_code_scoped(
 ) -> None:
     """The 'docker' install-method stamp must be baked at
     /opt/hermes/.install_method (code-scoped), NOT in $HERMES_HOME."""
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name)
 
     # Code-scoped stamp must exist and say "docker"
     r = docker_exec_sh(
@@ -124,12 +112,7 @@ def test_stale_docker_stamp_in_home_is_healed_on_boot(
     """A stale 'docker' stamp left in $HERMES_HOME by an older image
     must be removed on boot so shared homes self-heal."""
     # Start container, write a stale stamp
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name)
 
     # Write a stale 'docker' stamp as root
     docker_exec(
@@ -142,11 +125,7 @@ def test_stale_docker_stamp_in_home_is_healed_on_boot(
     assert r.stdout.strip() == "docker"
 
     # Restart - stage2 should heal it
-    subprocess.run(
-        ["docker", "restart", container_name],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    restart_container(container_name)
 
     # The stale stamp must be gone
     r = docker_exec_sh(

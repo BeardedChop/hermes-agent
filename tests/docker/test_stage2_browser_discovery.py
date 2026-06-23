@@ -7,9 +7,7 @@ up by a broad ``find | grep``).
 """
 from __future__ import annotations
 
-import subprocess
-
-from tests.docker.conftest import docker_exec_sh, wait_for_container_ready
+from tests.docker.conftest import docker_exec_sh, start_container
 
 
 def test_stage2_discovers_chromium_binary(
@@ -23,13 +21,7 @@ def test_stage2_discovers_chromium_binary(
     Playwright's tarball but must not be picked up. This test verifies the
     discovered binary is a real browser, not a .so.
     """
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    # Give s6 + stage2-hook time to run.
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name)
 
     # AGENT_BROWSER_EXECUTABLE_PATH must be set via s6 container_environment.
     r = docker_exec_sh(
@@ -77,12 +69,7 @@ def test_stage2_browser_path_accessible_to_hermes_user(
     """The discovered browser binary must be accessible to the
     unprivileged hermes user (UID 10000), since that's who runs
     agent-browser subprocesses."""
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name)
 
     r = docker_exec_sh(
         container_name,

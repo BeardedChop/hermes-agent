@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import subprocess
 
-from tests.docker.conftest import docker_exec, docker_exec_sh, wait_for_container_ready
+from tests.docker.conftest import docker_exec, docker_exec_sh, start_container, restart_container
 
 
 def test_main_wrapper_preserves_docker_workdir(
@@ -57,15 +57,7 @@ def test_dashboard_service_resets_home(
     we bind to 127.0.0.1 where the auth gate doesn't engage, and check
     the process env.
     """
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         "-e", "HERMES_DASHBOARD=1",
-         "-e", "HERMES_DASHBOARD_HOST=127.0.0.1",
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    # Give s6 + dashboard service time to start.
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name, "HERMES_DASHBOARD=1", "HERMES_DASHBOARD_HOST=127.0.0.1")
 
     # Check if the dashboard process is running and inspect its HOME.
     r = docker_exec_sh(
@@ -104,14 +96,7 @@ def test_dashboard_does_not_auto_insecure_from_host(
     gate correctly blocks an unauthenticated non-loopback bind), that's
     also acceptable — the point is no auto-insecure.
     """
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         "-e", "HERMES_DASHBOARD=1",
-         "-e", "HERMES_DASHBOARD_HOST=0.0.0.0",
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name, "HERMES_DASHBOARD=1", "HERMES_DASHBOARD_HOST=0.0.0.0")
 
     # Check the dashboard process command line for --insecure.
     r = docker_exec_sh(
@@ -140,12 +125,7 @@ def test_stage2_repairs_profiles_and_cron_ownership(
     We simulate a root-owned file in each, then restart the container
     and verify ownership is repaired.
     """
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name)
 
     # Create root-owned files in profiles/ and cron/ to simulate
     # docker exec (root) writes.
@@ -174,12 +154,7 @@ def test_stage2_repairs_profiles_and_cron_ownership(
     )
 
     # Restart — stage2 hook runs again and repairs ownership.
-    subprocess.run(
-        ["docker", "restart", container_name],
-        check=True, capture_output=True, timeout=60,
-    )
-    # Wait for stage2 to complete.
-    wait_for_container_ready(container_name)
+    restart_container(container_name)
 
     # Verify files are now owned by hermes.
     r = docker_exec_sh(

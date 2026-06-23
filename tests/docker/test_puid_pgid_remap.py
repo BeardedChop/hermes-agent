@@ -10,23 +10,14 @@ Build the real image and verify the actual runtime behavior:
 """
 from __future__ import annotations
 
-import subprocess
-
-from tests.docker.conftest import docker_exec_sh, wait_for_container_ready
+from tests.docker.conftest import docker_exec_sh, start_container
 
 
 def test_puid_pgid_remaps_hermes_user(
     built_image: str, container_name: str,
 ) -> None:
     """PUID=1000 PGID=1000 must remap the hermes user to UID 1000."""
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         "-e", "PUID=1000",
-         "-e", "PGID=1000",
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name, "PUID=1000", "PGID=1000")
 
     r = docker_exec_sh(
         container_name,
@@ -51,16 +42,7 @@ def test_hermes_uid_gid_take_precedence_over_aliases(
     built_image: str, container_name: str,
 ) -> None:
     """HERMES_UID/HERMES_GID must win over PUID/PGID when both are set."""
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         "-e", "HERMES_UID=2000",
-         "-e", "HERMES_GID=2001",
-         "-e", "PUID=1000",
-         "-e", "PGID=1000",
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name, "HERMES_UID=2000", "HERMES_GID=2001", "PUID=1000", "PGID=1000")
 
     r = docker_exec_sh(container_name, "id -u hermes", timeout=10)
     assert r.stdout.strip() == "2000", (
@@ -77,14 +59,7 @@ def test_nas_low_uid_accepted(
     built_image: str, container_name: str,
 ) -> None:
     """NAS-style low UIDs (99:100, common on Unraid) must be accepted."""
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         "-e", "PUID=99",
-         "-e", "PGID=100",
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name, "PUID=99", "PGID=100")
 
     r = docker_exec_sh(container_name, "id -u hermes", timeout=10)
     assert r.stdout.strip() == "99", (
@@ -101,14 +76,7 @@ def test_remap_enables_data_volume_writes(
     built_image: str, container_name: str,
 ) -> None:
     """After remap, the hermes user must be able to write to /opt/data."""
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         "-e", "PUID=1000",
-         "-e", "PGID=1000",
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name, "PUID=1000", "PGID=1000")
 
     r = docker_exec_sh(
         container_name,

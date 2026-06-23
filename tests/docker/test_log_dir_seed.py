@@ -10,21 +10,14 @@ s6-log crash-loops on mkdir: Permission denied.
 """
 from __future__ import annotations
 
-import subprocess
-
-from tests.docker.conftest import docker_exec_sh, wait_for_container_ready
+from tests.docker.conftest import docker_exec_sh, start_container
 
 
 def test_logs_gateways_seeded_and_hermes_owned(
     built_image: str, container_name: str,
 ) -> None:
     """logs/ and logs/gateways/ must exist and be owned by hermes after boot."""
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name)
 
     # Both directories must exist
     r = docker_exec_sh(

@@ -6,9 +6,7 @@ user.
 """
 from __future__ import annotations
 
-import subprocess
-
-from tests.docker.conftest import docker_exec, docker_exec_sh, wait_for_container_ready
+from tests.docker.conftest import docker_exec, docker_exec_sh, start_container
 
 
 def test_config_migration_runs_on_boot(
@@ -17,12 +15,7 @@ def test_config_migration_runs_on_boot(
     """A config.yaml in $HERMES_HOME must be migrated on boot by
     docker_config_migrate.py, running as the hermes user."""
     # Start container
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
-    )
-    wait_for_container_ready(container_name)
+    start_container(built_image, container_name)
 
     # Verify config.yaml exists (should be seeded by stage2 if not present)
     r = docker_exec_sh(
@@ -61,13 +54,9 @@ def test_config_migration_opt_out_env_var_respected(
     built_image: str, container_name: str,
 ) -> None:
     """HERMES_SKIP_CONFIG_MIGRATION=1 must skip the migration."""
-    subprocess.run(
-        ["docker", "run", "-d", "--name", container_name,
-         "-e", "HERMES_SKIP_CONFIG_MIGRATION=1",
-         built_image, "sleep", "infinity"],
-        check=True, capture_output=True, timeout=60,
+    start_container(
+        built_image, container_name, "HERMES_SKIP_CONFIG_MIGRATION=1",
     )
-    wait_for_container_ready(container_name)
 
     # config.yaml should still be seeded (seeding is separate from migration)
     r = docker_exec_sh(
