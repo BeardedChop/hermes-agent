@@ -204,6 +204,23 @@ def _env_enabled(name: str) -> bool:
     return env_var_enabled(name)
 
 
+def _telemetry_local_enabled() -> bool:
+    """True when the local telemetry plane is enabled (telemetry.local, default true).
+
+    Gates auto-loading of the bundled ``telemetry`` plugin. Reads config defensively
+    so a malformed/missing telemetry section defaults to on (the design default).
+    """
+    try:
+        from hermes_cli.config import load_config
+        config = load_config()
+        tel = cfg_get(config, "telemetry", default={})
+        if not isinstance(tel, dict):
+            return True
+        return bool(tel.get("local", True))
+    except Exception:
+        return True
+
+
 def _get_disabled_plugins() -> set:
     """Read the disabled plugins list from config.yaml.
 
@@ -1324,6 +1341,24 @@ class PluginManager:
             # available out of the box without the user having to opt in.
             if manifest.source == "bundled" and manifest.kind in {"backend", "platform"}:
                 self._load_plugin(manifest)
+                continue
+
+            # The bundled telemetry plugin auto-loads when the local plane is
+            # enabled (telemetry.local, default true). It's observational
+            # (lifecycle hooks -> local event log), writes nothing to the
+            # network, and powers /usage and /insights, so it should be on out
+            # of the box without an opt-in. A user who sets telemetry.local:
+            # false opts out and it is skipped like any disabled plugin.
+            if (
+                manifest.source == "bundled"
+                and (manifest.key or manifest.name) == "telemetry"
+            ):
+                if _telemetry_local_enabled():
+                    self._load_plugin(manifest)
+                else:
+                    loaded = LoadedPlugin(manifest=manifest, enabled=False)
+                    loaded.error = "disabled (telemetry.local is false)"
+                    self._plugins[lookup_key] = loaded
                 continue
 
             # Everything else (standalone, user-installed backends,
