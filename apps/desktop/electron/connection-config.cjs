@@ -37,6 +37,20 @@
 const AT_COOKIE_VARIANTS = ['__Host-hermes_session_at', '__Secure-hermes_session_at', 'hermes_session_at']
 const RT_COOKIE_VARIANTS = ['__Host-hermes_session_rt', '__Secure-hermes_session_rt', 'hermes_session_rt']
 
+// The Nous portal (NAS) does NOT use Hermes gateway session cookies — it is a
+// Privy-authed Next.js app. NAS `auth()` (src/server/auth/session.ts) reads the
+// `privy-token` access-token cookie (with `privy-id-token` alongside), which is
+// also exactly what the `/api/agents` cookie-auth path validates. So portal
+// sign-in / discovery liveness must look for the Privy cookie, NOT the gateway
+// cookies above. `privy-token` is the access token (the required signal);
+// variants cover the secured-prefix forms and the older `privy-session` name.
+const PRIVY_SESSION_COOKIE_VARIANTS = [
+  '__Host-privy-token',
+  '__Secure-privy-token',
+  'privy-token',
+  'privy-session'
+]
+
 function normalizeRemoteBaseUrl(rawUrl) {
   const value = String(rawUrl || '').trim()
 
@@ -275,15 +289,30 @@ function cookiesHaveLiveSession(cookies) {
   return cookies.some(c => c && c.value && (AT_COOKIE_VARIANTS.includes(c.name) || RT_COOKIE_VARIANTS.includes(c.name)))
 }
 
+/**
+ * True if the cookie jar holds a live Nous PORTAL (Privy) session — a non-empty
+ * `privy-token` (access-token) cookie, or a variant. This is the portal
+ * analogue of `cookiesHaveLiveSession`: the portal authenticates via Privy, not
+ * the Hermes gateway session cookies, so cloud sign-in / discovery liveness
+ * must check THIS, not the gateway helpers. (NAS `auth()` and the `/api/agents`
+ * cookie path both key off `privy-token`.)
+ */
+function cookiesHavePrivySession(cookies) {
+  if (!Array.isArray(cookies)) return false
+  return cookies.some(c => c && c.value && PRIVY_SESSION_COOKIE_VARIANTS.includes(c.name))
+}
+
 module.exports = {
   AT_COOKIE_VARIANTS,
   RT_COOKIE_VARIANTS,
+  PRIVY_SESSION_COOKIE_VARIANTS,
   authModeFromStatus,
   buildGatewayWsUrl,
   buildGatewayWsUrlWithTicket,
   connectionScopeKey,
   cookiesHaveSession,
   cookiesHaveLiveSession,
+  cookiesHavePrivySession,
   modeIsRemoteLike,
   normAuthMode,
   normalizeRemoteBaseUrl,

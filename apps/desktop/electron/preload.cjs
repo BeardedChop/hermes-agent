@@ -47,7 +47,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     status: () => ipcRenderer.invoke('hermes:cloud:status'),
     login: () => ipcRenderer.invoke('hermes:cloud:login'),
     logout: () => ipcRenderer.invoke('hermes:cloud:logout'),
-    discover: () => ipcRenderer.invoke('hermes:cloud:discover'),
+    discover: org => ipcRenderer.invoke('hermes:cloud:discover', org),
     agentSignIn: dashboardUrl => ipcRenderer.invoke('hermes:cloud:agent-sign-in', dashboardUrl)
   },
   profile: {

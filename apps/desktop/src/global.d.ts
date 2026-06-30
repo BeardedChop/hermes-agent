@@ -61,7 +61,7 @@ declare global {
         status: () => Promise<DesktopCloudStatus>
         login: () => Promise<DesktopCloudStatus & { ok: boolean }>
         logout: () => Promise<DesktopCloudStatus & { ok: boolean }>
-        discover: () => Promise<DesktopCloudDiscoverResult>
+        discover: (org?: string) => Promise<DesktopCloudDiscoverResult>
         agentSignIn: (dashboardUrl: string) => Promise<DesktopCloudAgentSignInResult>
       }
       profile: {
@@ -480,9 +480,23 @@ export interface DesktopCloudAgent {
   dashboardGatewayState: string
 }
 
-export interface DesktopCloudDiscoverResult {
-  agents: DesktopCloudAgent[]
+// An org the signed-in user belongs to — for the org picker shown when a
+// multi-org user's discovery call needs disambiguation (NAS 409).
+export interface DesktopCloudOrg {
+  id: string
+  slug: string | null
+  name: string
+  isPersonal: boolean
+  // "OWNER" | "MEMBER".
+  role: string
 }
+
+// Discovery result: either the agent list, OR a request to pick an org first
+// (multi-org user, no org chosen yet). The renderer shows a picker on the
+// latter and re-calls discover(org).
+export type DesktopCloudDiscoverResult =
+  | { agents: DesktopCloudAgent[]; needsOrgSelection?: false }
+  | { needsOrgSelection: true; orgs: DesktopCloudOrg[] }
 
 export interface DesktopCloudAgentSignInResult {
   // The agent gateway base URL the silent sign-in targeted.

@@ -22,6 +22,7 @@ const {
   connectionScopeKey,
   cookiesHaveSession,
   cookiesHaveLiveSession,
+  cookiesHavePrivySession,
   modeIsRemoteLike,
   normAuthMode,
   normalizeRemoteBaseUrl,
@@ -358,6 +359,35 @@ test('cookiesHaveLiveSession is false for unrelated cookies and non-arrays', () 
   assert.equal(cookiesHaveLiveSession(null), false)
   assert.equal(cookiesHaveLiveSession(undefined), false)
   assert.equal(cookiesHaveLiveSession([]), false)
+})
+
+// --- cookiesHavePrivySession (Nous portal / Privy auth, NOT gateway cookies) ---
+
+test('cookiesHavePrivySession detects the privy-token access cookie', () => {
+  assert.equal(cookiesHavePrivySession([{ name: 'privy-token', value: 'jwt' }]), true)
+})
+
+test('cookiesHavePrivySession detects __Host-/__Secure- prefixes and the legacy privy-session name', () => {
+  assert.equal(cookiesHavePrivySession([{ name: '__Host-privy-token', value: 'x' }]), true)
+  assert.equal(cookiesHavePrivySession([{ name: '__Secure-privy-token', value: 'x' }]), true)
+  assert.equal(cookiesHavePrivySession([{ name: 'privy-session', value: 'x' }]), true)
+})
+
+test('cookiesHavePrivySession is false for an empty value', () => {
+  assert.equal(cookiesHavePrivySession([{ name: 'privy-token', value: '' }]), false)
+})
+
+test('cookiesHavePrivySession does NOT treat hermes gateway cookies as a portal session', () => {
+  // The whole point of Q7: a gateway session cookie is NOT a portal sign-in.
+  assert.equal(cookiesHavePrivySession([{ name: 'hermes_session_at', value: 'x' }]), false)
+  assert.equal(cookiesHavePrivySession([{ name: '__Host-hermes_session_rt', value: 'x' }]), false)
+})
+
+test('cookiesHavePrivySession is false for unrelated cookies and non-arrays', () => {
+  assert.equal(cookiesHavePrivySession([{ name: 'other', value: 'x' }]), false)
+  assert.equal(cookiesHavePrivySession(null), false)
+  assert.equal(cookiesHavePrivySession(undefined), false)
+  assert.equal(cookiesHavePrivySession([]), false)
 })
 
 // --- tokenPreview ---
