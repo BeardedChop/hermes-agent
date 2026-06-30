@@ -3,7 +3,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import type { DesktopAuthProvider, DesktopCloudAgent, DesktopConnectionProbeResult } from '@/global'
+import type {
+  DesktopAuthProvider,
+  DesktopCloudAgent,
+  DesktopCloudOrg,
+  DesktopConnectionProbeResult
+} from '@/global'
 import { useI18n } from '@/i18n'
 import { AlertCircle, Check, Cloud, FileText, Globe, Loader2, LogIn, Monitor, RefreshCw } from '@/lib/icons'
 import { cn } from '@/lib/utils'
@@ -116,6 +121,11 @@ export function GatewaySettings() {
   const [cloudAgents, setCloudAgents] = useState<DesktopCloudAgent[]>([])
   const [cloudDiscover, setCloudDiscover] = useState<CloudDiscoverStatus>('idle')
   const [cloudConnectingId, setCloudConnectingId] = useState<null | string>(null)
+  // Multi-org users: when discovery returns needsOrgSelection, we hold the org
+  // list here and show a picker. `cloudOrg` is the chosen org slug/id (null =
+  // not yet chosen / single-org user).
+  const [cloudOrgs, setCloudOrgs] = useState<DesktopCloudOrg[]>([])
+  const [cloudOrg, setCloudOrg] = useState<null | string>(null)
 
   // Connection scope: null = the global/default connection (the original
   // behavior); a profile name = that profile's per-profile remote override, so
@@ -395,7 +405,9 @@ export function GatewaySettings() {
 
   // Pull the discovered agent list over the shared portal session. Tolerant of
   // a lapsed session: a needsCloudLogin error flips us back to signed-out.
-  const discoverCloud = async () => {
+  // `org` scopes discovery for multi-org users; when discovery comes back with
+  // needsOrgSelection we surface the org list and show a picker instead.
+  const discoverCloud = async (org?: string) => {
     const desktop = window.hermesDesktop
 
     if (!desktop?.cloud) {
@@ -405,8 +417,25 @@ export function GatewaySettings() {
     setCloudDiscover('loading')
 
     try {
-      const { agents } = await desktop.cloud.discover()
-      setCloudAgents(agents)
+      const result = await desktop.cloud.discover(org)
+
+      if ('needsOrgSelection' in result && result.needsOrgSelection) {
+        // Multi-org user with no org chosen yet: show the picker. Don't clear a
+        // previously-chosen org list on a refresh.
+        setCloudOrgs(result.orgs)
+        setCloudAgents([])
+        setCloudDiscover('done')
+
+        return
+      }
+
+      // Single org (or org now chosen): we have agents.
+      setCloudAgents('agents' in result ? result.agents : [])
+
+      if (org) {
+        setCloudOrg(org)
+      }
+
       setCloudDiscover('done')
     } catch (err) {
       setCloudAgents([])
@@ -419,6 +448,14 @@ export function GatewaySettings() {
 
       notifyError(err, g.cloudDiscoverFailed)
     }
+  }
+
+  // User picked an org from the multi-org picker: remember it and re-run
+  // discovery scoped to it.
+  const selectCloudOrg = (org: DesktopCloudOrg) => {
+    const ref = org.slug ?? org.id
+    setCloudOrg(ref)
+    void discoverCloud(ref)
   }
 
   // On entering cloud mode (or scope change), read the portal session status and
@@ -448,6 +485,8 @@ export function GatewaySettings() {
           void discoverCloud()
         } else {
           setCloudAgents([])
+          setCloudOrgs([])
+          setCloudOrg(null)
           setCloudDiscover('idle')
         }
       })
@@ -497,6 +536,8 @@ export function GatewaySettings() {
       await desktop.cloud.logout()
       setCloudSignedIn(false)
       setCloudAgents([])
+      setCloudOrgs([])
+      setCloudOrg(null)
       setCloudDiscover('idle')
       notify({ kind: 'success', title: g.cloudSignedOutTitle, message: g.cloudSignedOutMessage })
     } catch (err) {
@@ -698,20 +739,52 @@ export function GatewaySettings() {
           />
 
           {cloudSignedIn ? (
+            cloudOrgs.length > 0 && !cloudOrg ? (
+              // Multi-org user who hasn't picked an org yet: show the org picker
+              // instead of the agent list. Selecting one re-runs discovery
+              // scoped to it.
+              <div className="mt-3">
+                <div className="mb-2 text-[length:var(--conversation-caption-font-size)] font-medium text-(--ui-text-secondary)">
+                  {g.cloudOrgPickerTitle}
+                </div>
+                <div className="grid gap-1">
+                  {cloudOrgs.map(orgEntry => (
+                    <ListRow
+                      action={
+                        <Button onClick={() => selectCloudOrg(orgEntry)} size="sm">
+                          {g.cloudOrgSelect}
+                        </Button>
+                      }
+                      description={g.cloudOrgRole(orgEntry.role)}
+                      key={orgEntry.id}
+                      title={orgEntry.name}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : (
             <div className="mt-3">
               <div className="mb-2 flex items-center justify-between">
                 <div className="text-[length:var(--conversation-caption-font-size)] font-medium text-(--ui-text-secondary)">
                   {g.cloudAgentsTitle}
                 </div>
-                <Button
-                  disabled={cloudDiscover === 'loading'}
-                  onClick={() => void discoverCloud()}
-                  size="sm"
-                  variant="text"
-                >
-                  {cloudDiscover === 'loading' ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                  {g.cloudRefresh}
-                </Button>
+                <div className="flex items-center gap-2">
+                  {cloudOrgs.length > 1 ? (
+                    // Let a multi-org user switch back to the org picker.
+                    <Button onClick={() => setCloudOrg(null)} size="sm" variant="text">
+                      {g.cloudOrgChange}
+                    </Button>
+                  ) : null}
+                  <Button
+                    disabled={cloudDiscover === 'loading'}
+                    onClick={() => void discoverCloud(cloudOrg ?? undefined)}
+                    size="sm"
+                    variant="text"
+                  >
+                    {cloudDiscover === 'loading' ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                    {g.cloudRefresh}
+                  </Button>
+                </div>
               </div>
 
               {cloudDiscover === 'loading' ? (
@@ -750,6 +823,7 @@ export function GatewaySettings() {
                 </div>
               )}
             </div>
+            )
           ) : null}
         </div>
       ) : null}

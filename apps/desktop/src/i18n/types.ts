@@ -450,6 +450,10 @@ export interface Translations {
       cloudNeedsSignIn: string
       cloudSignedInDesc: string
       cloudAgentsTitle: string
+      cloudOrgPickerTitle: string
+      cloudOrgSelect: string
+      cloudOrgChange: string
+      cloudOrgRole: (role: string) => string
       cloudLoadingAgents: string
       cloudNoAgents: string
       cloudRefresh: string

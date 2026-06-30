@@ -102,6 +102,7 @@ const {
   connectionScopeKey,
   cookiesHaveSession,
   cookiesHaveLiveSession,
+  cookiesHavePrivySession,
   modeIsRemoteLike,
   normAuthMode,
   normalizeRemoteBaseUrl,
@@ -4622,10 +4623,27 @@ function resolvePortalBaseUrl() {
 }
 
 // Whether the OAuth partition currently holds a live Nous portal session — the
-// credential that powers both discovery and the silent cascade. Reuses the
-// same AT-or-RT liveness notion as the per-gateway check.
+// credential that powers both discovery and the silent cascade. The portal
+// authenticates via PRIVY, not the Hermes gateway session cookies, so this
+// checks for the `privy-token` cookie on the portal host (NOT
+// hasLiveOauthSession, which looks for hermes_session_at/rt that the portal
+// never sets). See connection-config.cjs cookiesHavePrivySession.
 async function hasLivePortalSession() {
-  return hasLiveOauthSession(resolvePortalBaseUrl())
+  const sess = getOauthSession()
+  if (!sess) return false
+  const portalBaseUrl = resolvePortalBaseUrl()
+  const parsed = new URL(portalBaseUrl)
+  try {
+    const cookies = await sess.cookies.get({ url: portalBaseUrl })
+    return cookiesHavePrivySession(cookies)
+  } catch {
+    try {
+      const cookies = await sess.cookies.get({ domain: parsed.hostname })
+      return cookiesHavePrivySession(cookies)
+    } catch {
+      return false
+    }
+  }
 }
 
 // Drive a one-time interactive portal sign-in in the OAuth partition. Unlike
@@ -4665,8 +4683,8 @@ function openPortalLoginWindow() {
 
     const checkCookie = async () => {
       if (settled) return
-      // A live portal session (AT or RT cookie) means sign-in completed.
-      if (await hasLiveOauthSession(portalBaseUrl)) finish(null)
+      // A live portal (Privy) session cookie means sign-in completed.
+      if (await hasLivePortalSession()) finish(null)
     }
 
     try {
@@ -4707,12 +4725,15 @@ function openPortalLoginWindow() {
 
 // Discover the hosted (Hermes Cloud) agents the signed-in user can see. Calls
 // the NAS trimmed-summary endpoint over the partition-bound net, so the portal
-// session cookie is attached automatically (no bearer needed — NAS Phase 2.5
-// accepts the cookie). Returns the trimmed agent list; throws a
-// needsCloudLogin-tagged error when no portal session is present.
-async function discoverCloudAgents() {
+// session cookie is attached automatically (no bearer needed — NAS accepts the
+// cookie). Returns { agents } on success, or { needsOrgSelection: true, orgs }
+// when the user belongs to multiple orgs and hasn't picked one yet (NAS 409
+// org_selection_required). Pass `org` (a slug/id from a prior org list) to
+// scope discovery to that org. Throws a needsCloudLogin-tagged error when no
+// portal session is present.
+async function discoverCloudAgents(org) {
   const portalBaseUrl = resolvePortalBaseUrl()
-  if (!(await hasLiveOauthSession(portalBaseUrl))) {
+  if (!(await hasLivePortalSession())) {
     const err = new Error(
       'You are not signed in to Hermes Cloud. Open Settings → Gateway, choose Hermes Cloud, and sign in.'
     )
@@ -4720,9 +4741,10 @@ async function discoverCloudAgents() {
     throw err
   }
 
+  const orgQuery = org ? `?org=${encodeURIComponent(org)}` : ''
   let body
   try {
-    body = await fetchJsonViaOauthSession(`${portalBaseUrl}/api/agents`, {
+    body = await fetchJsonViaOauthSession(`${portalBaseUrl}/api/agents${orgQuery}`, {
       method: 'GET',
       timeoutMs: 15_000
     })
@@ -4735,12 +4757,50 @@ async function discoverCloudAgents() {
       err.cause = error
       throw err
     }
+    // A 409 means we're a multi-org user who hasn't picked an org. The body
+    // carries the user's org list; surface it so the renderer shows a picker
+    // and re-calls discovery with the chosen org. (fetchJsonViaOauthSession
+    // throws on >=400 with err.statusCode + err.message "409: <json body>".)
+    if (error && error.statusCode === 409) {
+      const orgs = parseOrgSelectionError(error)
+      if (orgs) {
+        return { needsOrgSelection: true, orgs }
+      }
+    }
     throw error
   }
 
+  return { agents: trimCloudAgents(body) }
+}
+
+// Extract the org list from a 409 org_selection_required error body. The error
+// message is "409: <raw json>" (see fetchJsonViaOauthSession); parse defensively
+// and return null if it isn't the shape we expect (caller then rethrows).
+function parseOrgSelectionError(error) {
+  const msg = String(error?.message || '')
+  const jsonStart = msg.indexOf('{')
+  if (jsonStart < 0) return null
+  let parsed
+  try {
+    parsed = JSON.parse(msg.slice(jsonStart))
+  } catch {
+    return null
+  }
+  if (parsed?.error !== 'org_selection_required' || !Array.isArray(parsed.orgs)) return null
+  return parsed.orgs
+    .filter(o => o && typeof o === 'object' && typeof o.id === 'string')
+    .map(o => ({
+      id: o.id,
+      slug: typeof o.slug === 'string' ? o.slug : null,
+      name: typeof o.name === 'string' ? o.name : o.id,
+      isPersonal: Boolean(o.isPersonal),
+      role: typeof o.role === 'string' ? o.role : 'MEMBER'
+    }))
+}
+
+// Project NAS's agent rows to the trimmed DTO the renderer consumes.
+function trimCloudAgents(body) {
   const agents = Array.isArray(body?.agents) ? body.agents : []
-  // Pass the trimmed DTO straight through; the renderer renders name/status/
-  // health and uses dashboardUrl to resolve a connection on selection.
   return agents
     .filter(a => a && typeof a === 'object' && typeof a.id === 'string')
     .map(a => ({
@@ -6485,9 +6545,10 @@ ipcMain.handle('hermes:cloud:logout', async () => {
   await clearOauthSession(resolvePortalBaseUrl())
   return { ok: true, signedIn: await hasLivePortalSession() }
 })
-ipcMain.handle('hermes:cloud:discover', async () => {
-  const agents = await discoverCloudAgents()
-  return { agents }
+ipcMain.handle('hermes:cloud:discover', async (_event, org) => {
+  // Returns { agents } or { needsOrgSelection: true, orgs }. `org` (optional)
+  // scopes discovery to a chosen org for multi-org users.
+  return discoverCloudAgents(typeof org === 'string' && org ? org : undefined)
 })
 ipcMain.handle('hermes:cloud:agent-sign-in', async (_event, dashboardUrl) => {
   // Silent per-agent sign-in via the shared portal session. Returns the agent's
