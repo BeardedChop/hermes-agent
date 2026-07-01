@@ -747,6 +747,7 @@ export const zh: Translations = {
       cloudSignedOutTitle: '已退出 Hermes Cloud',
       cloudSignedOutMessage: '已清除 Hermes Cloud 会话。',
       cloudConnectedTitle: '已连接',
+      cloudConnectedPill: '已连接',
       cloudConnectedTo: name => `已连接到 ${name}。`,
       cloudAgentProvisioning: '正在配置…',
       cloudStatusLabel: status => `状态：${status}`,

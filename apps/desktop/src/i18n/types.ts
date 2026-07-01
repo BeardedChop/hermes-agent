@@ -465,6 +465,7 @@ export interface Translations {
       cloudSignedOutTitle: string
       cloudSignedOutMessage: string
       cloudConnectedTitle: string
+      cloudConnectedPill: string
       cloudConnectedTo: (name: string) => string
       cloudAgentProvisioning: string
       cloudStatusLabel: (status: string) => string

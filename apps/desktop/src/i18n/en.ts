@@ -558,6 +558,7 @@ export const en: Translations = {
       cloudSignedOutTitle: 'Signed out of Hermes Cloud',
       cloudSignedOutMessage: 'Cleared the Hermes Cloud session.',
       cloudConnectedTitle: 'Connected',
+      cloudConnectedPill: 'Connected',
       cloudConnectedTo: name => `Connected to ${name}.`,
       cloudAgentProvisioning: 'Provisioning…',
       cloudStatusLabel: status => `Status: ${status}`,

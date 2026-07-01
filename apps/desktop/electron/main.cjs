@@ -4815,7 +4815,20 @@ async function discoverCloudAgents(org) {
     throw error
   }
 
-  return { agents: trimCloudAgents(body) }
+  return { agents: trimCloudAgents(body), org: trimCloudOrg(body?.org) }
+}
+
+// Project a NAS response org ({ id, slug, name, isPersonal }) to the trimmed
+// shape the renderer persists, or null when absent/malformed.
+function trimCloudOrg(org) {
+  if (!org || typeof org !== 'object' || typeof org.id !== 'string') return null
+  return {
+    id: org.id,
+    slug: typeof org.slug === 'string' ? org.slug : null,
+    name: typeof org.name === 'string' ? org.name : org.id,
+    isPersonal: Boolean(org.isPersonal),
+    role: typeof org.role === 'string' ? org.role : 'MEMBER'
+  }
 }
 
 // Extract the org list from a 409 org_selection_required error body. The error
@@ -4932,6 +4945,14 @@ function sanitizeConnectionProfiles(raw) {
     cleaned.authMode = normAuthMode(entry.authMode)
     if (entry.token && typeof entry.token === 'object') {
       cleaned.token = entry.token
+    }
+    // Preserve the Hermes Cloud org tag on cloud-mode entries so Settings can
+    // reopen into the same org for a per-profile cloud connection.
+    if (cleaned.mode === 'cloud') {
+      const org = String(entry.org || '').trim()
+      if (org) {
+        cleaned.org = org
+      }
     }
     out[name] = cleaned
   }
@@ -5064,6 +5085,9 @@ async function sanitizeDesktopConnectionConfig(config = readDesktopConnectionCon
     remoteAuthMode: authMode,
     remoteOauthConnected,
     remoteUrl,
+    // The persisted Hermes Cloud org (slug/id) for a cloud connection, or '' for
+    // remote/local. Lets Settings → Gateway reopen into the same org.
+    cloudOrg: mode === 'cloud' ? String(block.org || '') : '',
     remoteTokenPreview: tokenPreview(remoteToken),
     remoteTokenSet: Boolean(remoteToken),
     // The env override only forces the global/primary connection; a per-profile
@@ -5075,11 +5099,19 @@ async function sanitizeDesktopConnectionConfig(config = readDesktopConnectionCon
 // Build + validate a `{ url, authMode, token }` remote block. OAuth gateways
 // authenticate via the login-window session cookie (verified at connect time in
 // resolveRemoteBackend), so only token-auth remotes require a saved token.
-function buildRemoteBlock(remoteUrl, authMode, token) {
+// `org` (optional) is the Hermes Cloud org slug/id the instance was discovered
+// under — persisted so Settings can reopen into the same org; omitted from the
+// block when empty so plain remote connections stay unchanged.
+function buildRemoteBlock(remoteUrl, authMode, token, org) {
   if (authMode !== 'oauth' && !decryptDesktopSecret(token)) {
     throw new Error('Remote gateway session token is required.')
   }
-  return { url: normalizeRemoteBaseUrl(remoteUrl), authMode, token }
+  const block = { url: normalizeRemoteBaseUrl(remoteUrl), authMode, token }
+  const orgValue = typeof org === 'string' ? org.trim() : ''
+  if (orgValue) {
+    block.org = orgValue
+  }
+  return block
 }
 
 function coerceDesktopConnectionConfig(input = {}, existing = readDesktopConnectionConfig(), options = {}) {
@@ -5096,6 +5128,11 @@ function coerceDesktopConnectionConfig(input = {}, existing = readDesktopConnect
   const remoteUrl = String(input.remoteUrl ?? existingBlock.url ?? '').trim()
   // authMode: explicit input wins; otherwise inherit the saved value, default 'token'.
   const authMode = resolveAuthMode(input.remoteAuthMode, existingBlock.authMode)
+  // Cloud org: only meaningful for 'cloud' mode. Explicit input wins; otherwise
+  // inherit the saved org. A plain 'remote' connection never carries an org
+  // (switching cloud→remote drops it), so it stays unset unless mode is cloud.
+  const cloudOrg =
+    mode === 'cloud' ? String(input.cloudOrg ?? existingBlock.org ?? '').trim() : ''
   const incomingToken = typeof input.remoteToken === 'string' ? input.remoteToken.trim() : ''
   const nextToken = incomingToken
     ? persistToken
@@ -5109,7 +5146,7 @@ function coerceDesktopConnectionConfig(input = {}, existing = readDesktopConnect
     // default. The mode tag (remote vs cloud) is preserved on the entry.
     const profiles = { ...(existing.profiles || {}) }
     if (remoteLike) {
-      profiles[key] = { mode, ...buildRemoteBlock(remoteUrl, authMode, nextToken) }
+      profiles[key] = { mode, ...buildRemoteBlock(remoteUrl, authMode, nextToken, cloudOrg) }
     } else {
       delete profiles[key]
     }
@@ -5121,7 +5158,7 @@ function coerceDesktopConnectionConfig(input = {}, existing = readDesktopConnect
   }
 
   const nextRemote = remoteLike
-    ? buildRemoteBlock(remoteUrl, authMode, nextToken)
+    ? buildRemoteBlock(remoteUrl, authMode, nextToken, cloudOrg)
     : { url: remoteUrl ? normalizeRemoteBaseUrl(remoteUrl) : remoteUrl, authMode, token: nextToken }
 
   // Preserve per-profile overrides when saving the global connection.

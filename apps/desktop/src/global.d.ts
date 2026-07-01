@@ -412,6 +412,10 @@ export interface DesktopConnectionConfig {
   remoteTokenPreview: string | null
   remoteTokenSet: boolean
   remoteUrl: string
+  // For a 'cloud' connection: the persisted Hermes Cloud org (slug or id) the
+  // connected instance was discovered under, so Settings → Gateway can reopen
+  // into that org. Empty string for remote/local.
+  cloudOrg: string
 }
 
 export interface DesktopConnectionConfigInput {
@@ -422,6 +426,9 @@ export interface DesktopConnectionConfigInput {
   remoteAuthMode?: 'oauth' | 'token'
   remoteToken?: string
   remoteUrl?: string
+  // For a 'cloud' connection: the selected Hermes Cloud org (slug or id) to
+  // persist so Settings can reopen into it. Ignored for remote/local modes.
+  cloudOrg?: string
 }
 
 export interface DesktopConnectionTestResult {
@@ -493,9 +500,11 @@ export interface DesktopCloudOrg {
 
 // Discovery result: either the agent list, OR a request to pick an org first
 // (multi-org user, no org chosen yet). The renderer shows a picker on the
-// latter and re-calls discover(org).
+// latter and re-calls discover(org). On the agents branch, `org` echoes the
+// authoritatively-resolved org the list was scoped to (from NAS), so the
+// desktop persists it without relying on transient picker state.
 export type DesktopCloudDiscoverResult =
-  | { agents: DesktopCloudAgent[]; needsOrgSelection?: false }
+  | { agents: DesktopCloudAgent[]; org?: DesktopCloudOrg | null; needsOrgSelection?: false }
   | { needsOrgSelection: true; orgs: DesktopCloudOrg[] }
 
 export interface DesktopCloudAgentSignInResult {

@@ -33,6 +33,7 @@ interface GatewaySettingsState {
   remoteTokenPreview: string | null
   remoteTokenSet: boolean
   remoteUrl: string
+  cloudOrg: string
 }
 
 const EMPTY_STATE: GatewaySettingsState = {
@@ -42,7 +43,8 @@ const EMPTY_STATE: GatewaySettingsState = {
   remoteOauthConnected: false,
   remoteTokenPreview: null,
   remoteTokenSet: false,
-  remoteUrl: ''
+  remoteUrl: '',
+  cloudOrg: ''
 }
 
 function ModeCard({
@@ -186,6 +188,21 @@ export function GatewaySettings() {
   // OAuth login button or the session-token entry box. The effective auth mode
   // prefers a fresh probe result over the saved value.
   const trimmedUrl = state.remoteUrl.trim()
+
+  // The dashboardUrl of the currently-connected cloud instance (the saved
+  // cloud connection's remoteUrl), normalized for comparison against each
+  // discovered agent's dashboardUrl so we can highlight the active one and hide
+  // its Connect button. Empty unless the saved connection is a cloud one.
+  const connectedCloudUrl =
+    state.mode === 'cloud' ? state.remoteUrl.trim().replace(/\/+$/, '') : ''
+
+  const isConnectedAgent = (agent: DesktopCloudAgent) =>
+    Boolean(
+      connectedCloudUrl &&
+        agent.dashboardUrl &&
+        agent.dashboardUrl.trim().replace(/\/+$/, '') === connectedCloudUrl
+    )
+
   useEffect(() => {
     if (state.mode !== 'remote' || !trimmedUrl || !/^https?:\/\//i.test(trimmedUrl)) {
       setProbeStatus('idle')
@@ -433,7 +450,16 @@ export function GatewaySettings() {
       // Single org (or org now chosen): we have agents.
       setCloudAgents('agents' in result ? result.agents : [])
 
-      if (org) {
+      // Record the org AUTHORITATIVELY from the response (NAS echoes the org the
+      // list was scoped to), falling back to the org we requested. This is what
+      // gets persisted on connect, so it must be set even on single-membership
+      // auto-resolve where no picker ran and no `org` arg was passed.
+      const resolvedOrgRef =
+        'org' in result && result.org ? (result.org.slug ?? result.org.id) : null
+
+      if (resolvedOrgRef) {
+        setCloudOrg(resolvedOrgRef)
+      } else if (org) {
         setCloudOrg(org)
       }
 
@@ -483,7 +509,17 @@ export function GatewaySettings() {
         setCloudSignedIn(status.signedIn)
 
         if (status.signedIn) {
-          void discoverCloud()
+          // Restore the persisted org (if any) so we reopen straight into that
+          // org's agent list instead of the picker; discoverCloud(org) also
+          // records it as the selected org. Empty → normal discovery (single-org
+          // resolves automatically; multi-org shows the picker).
+          const savedOrg = state.cloudOrg || ''
+
+          if (savedOrg) {
+            setCloudOrg(savedOrg)
+          }
+
+          void discoverCloud(savedOrg || undefined)
         } else {
           setCloudAgents([])
           setCloudOrgs([])
@@ -578,11 +614,13 @@ export function GatewaySettings() {
       }
 
       // Persist a cloud-mode connection (remote-shaped, oauth) and reconnect.
+      // Include the selected org so Settings reopens into the same org + instance.
       const next = await desktop.applyConnectionConfig({
         mode: 'cloud',
         profile: scope ?? undefined,
         remoteAuthMode: 'oauth',
-        remoteUrl: agent.dashboardUrl
+        remoteUrl: agent.dashboardUrl,
+        cloudOrg: cloudOrg ?? undefined
       })
 
       setState(next)
@@ -806,27 +844,45 @@ export function GatewaySettings() {
                 </div>
               ) : (
                 <div className="grid gap-1">
-                  {cloudAgents.map(agent => (
-                    <ListRow
-                      action={
-                        <Button
-                          disabled={!agent.dashboardUrl || cloudConnectingId !== null}
-                          onClick={() => void connectCloudAgent(agent)}
-                          size="sm"
-                        >
-                          {cloudConnectingId === agent.id ? <Loader2 className="animate-spin" /> : null}
-                          {agent.dashboardUrl
-                            ? cloudConnectingId === agent.id
-                              ? g.cloudConnecting
-                              : g.cloudConnect
-                            : g.cloudAgentProvisioning}
-                        </Button>
-                      }
-                      description={g.cloudStatusLabel(agent.dashboardGatewayState)}
-                      key={agent.id}
-                      title={agent.name}
-                    />
-                  ))}
+                  {cloudAgents.map(agent => {
+                    const connected = isConnectedAgent(agent)
+
+                    return (
+                      <div
+                        className={cn(
+                          'rounded-md px-2',
+                          connected && 'bg-primary/5 ring-1 ring-primary/25'
+                        )}
+                        key={agent.id}
+                      >
+                        <ListRow
+                          action={
+                            connected ? (
+                              <Pill tone="primary">
+                                <Check className="mr-1 inline size-3" />
+                                {g.cloudConnectedPill}
+                              </Pill>
+                            ) : (
+                              <Button
+                                disabled={!agent.dashboardUrl || cloudConnectingId !== null}
+                                onClick={() => void connectCloudAgent(agent)}
+                                size="sm"
+                              >
+                                {cloudConnectingId === agent.id ? <Loader2 className="animate-spin" /> : null}
+                                {agent.dashboardUrl
+                                  ? cloudConnectingId === agent.id
+                                    ? g.cloudConnecting
+                                    : g.cloudConnect
+                                  : g.cloudAgentProvisioning}
+                              </Button>
+                            )
+                          }
+                          description={g.cloudStatusLabel(agent.dashboardGatewayState)}
+                          title={agent.name}
+                        />
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>
