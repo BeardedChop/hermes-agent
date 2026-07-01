@@ -4479,7 +4479,23 @@ async function clearOauthSession(baseUrl) {
 // reject if the user closes the window first. The window navigates through the
 // IDP and back to /auth/callback, which sets the session cookies on the
 // partition; we poll the cookie jar rather than try to read the HttpOnly value.
-function openOauthLoginWindow(baseUrl) {
+// Open a gateway login window in the OAuth session partition, resolving once
+// the access-token cookie appears (login done) or rejecting if the user closes
+// the window first.
+//
+// `silent` selects the URL the window loads, which decides interactive-vs-silent:
+//   - silent=false (default): load ``/login`` — the public interstitial that
+//     renders the "Log in with X" provider chooser. This is the interactive
+//     remote-gateway login the settings UI drives.
+//   - silent=true: load the PROTECTED root ``/`` instead. ``/login`` is a public
+//     route, so loading it NEVER triggers the gate's auto-SSO and always shows
+//     the chooser. Loading a protected page with no session cookie makes the
+//     gate run ``_auto_sso_response``: single registered provider + a live
+//     portal session in this partition → a silent 302 through
+//     ``/auth/login`` → portal ``/oauth/authorize`` (auto-approves org members)
+//     → ``/auth/callback``, which sets the gateway cookie with NO interactive
+//     prompt. This is the per-agent cloud cascade (decisions.md Q5).
+function openOauthLoginWindow(baseUrl, { silent = false } = {}) {
   return new Promise((resolve, reject) => {
     if (!app.isReady()) {
       reject(new Error('Desktop is not ready to start an OAuth login.'))
@@ -4494,11 +4510,13 @@ function openOauthLoginWindow(baseUrl) {
     let settled = false
     let win = null
     let pollTimer = null
+    let revealTimer = null
 
     const finish = err => {
       if (settled) return
       settled = true
       if (pollTimer) clearInterval(pollTimer)
+      if (revealTimer) clearTimeout(revealTimer)
       try {
         if (win && !win.isDestroyed()) win.destroy()
       } catch {
@@ -4517,8 +4535,14 @@ function openOauthLoginWindow(baseUrl) {
       win = new BrowserWindow({
         width: 520,
         height: 720,
-        title: 'Sign in to Hermes gateway',
+        title: silent ? 'Connecting to Hermes Cloud agent…' : 'Sign in to Hermes gateway',
         autoHideMenuBar: true,
+        // Silent cascade: start HIDDEN. The auto-SSO 302 chain completes in
+        // well under a second, so the window normally never needs to show. We
+        // only reveal it as a fallback if the cascade DOESN'T complete quickly
+        // (e.g. the portal session lapsed and the gate fell through to the
+        // interactive chooser) — see the reveal timer below.
+        show: !silent,
         webPreferences: {
           contextIsolation: true,
           nodeIntegration: false,
@@ -4540,6 +4564,23 @@ function openOauthLoginWindow(baseUrl) {
     win.webContents.on('did-frame-navigate', () => void checkCookie())
     pollTimer = setInterval(() => void checkCookie(), 750)
 
+    // Silent-mode reveal fallback: if the cascade hasn't settled shortly, the
+    // auto-SSO didn't go through silently (no portal session, multi-provider,
+    // loop-guard tripped, etc.) and the window is now showing an interactive
+    // page. Reveal it so the user can complete sign-in manually rather than
+    // staring at nothing. Cleared on finish().
+    if (silent && win) {
+      revealTimer = setTimeout(() => {
+        try {
+          if (!settled && win && !win.isDestroyed() && !win.isVisible()) {
+            win.show()
+          }
+        } catch {
+          // window torn down
+        }
+      }, 2500)
+    }
+
     win.on('closed', () => {
       if (!settled) finish(new Error('Login window closed before authentication completed.'))
     })
@@ -4547,7 +4588,11 @@ function openOauthLoginWindow(baseUrl) {
     // ``next`` is intentionally omitted: the gateway lands on ``/`` after
     // login, which is a valid authenticated page that sets the cookies. We
     // only care that the cookie jar is populated.
-    const loginUrl = `${normalizeRemoteBaseUrl(baseUrl)}/login`
+    //
+    // silent=true loads the protected root so the gate auto-SSOs (no chooser);
+    // silent=false loads the public ``/login`` chooser for interactive sign-in.
+    const normalizedBase = normalizeRemoteBaseUrl(baseUrl)
+    const loginUrl = silent ? `${normalizedBase}/` : `${normalizedBase}/login`
     win.loadURL(loginUrl).catch(error => {
       finish(error instanceof Error ? error : new Error(String(error)))
     })
@@ -4911,7 +4956,7 @@ async function cloudAgentSilentSignIn(dashboardUrl) {
     err.needsCloudLogin = true
     throw err
   }
-  await openOauthLoginWindow(baseUrl)
+  await openOauthLoginWindow(baseUrl, { silent: true })
   return { baseUrl, connected: await hasOauthSessionCookie(baseUrl) }
 }
 
