@@ -1833,6 +1833,18 @@ _NOUS_STALE_PORTAL_HOSTS: FrozenSet[str] = frozenset({
 # "localhost" / "127.0.0.1" are valid for local development and testing.
 _NOUS_PORTAL_ALLOWED_HOSTS: FrozenSet[str] = frozenset({
     "portal.nousresearch.com",
+    # Staging portal — hosted agents provisioned by nous-account-service on the
+    # `staging` Vercel environment persist this host to auth.json's
+    # portal_base_url (see buildBootstrapAuthJson / env.BASE_URL there). Without
+    # it, resolve_nous_access_token's allowlist guard silently rewrites
+    # portal_base_url back to prod on the very first refresh, so a
+    # staging-issued refresh token gets replayed against the PROD token
+    # endpoint. Prod correctly rejects it with invalid_grant, which then
+    # triggers _quarantine_nous_oauth_state and wipes the credential pool
+    # entirely — turning a config mismatch into a full relogin requirement.
+    # Same failure shape as the NOUS_INFERENCE_BASE_URL/_ALLOWED_NOUS_INFERENCE_HOSTS
+    # fix below; this closes the sibling gap on the portal host.
+    "portal.staging-nousresearch.com",
     "localhost",
     "127.0.0.1",
 })
