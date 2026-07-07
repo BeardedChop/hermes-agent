@@ -525,6 +525,19 @@ class GitHubSource(SkillSource):
         # https://github.com/NVIDIA/skills/tree/main/skills
         {"repo": "NVIDIA/skills", "path": "skills/"},
         {"repo": "garrytan/gstack", "path": ""},
+        # K-Dense-AI/scientific-agent-skills: ~150 scientific research skills
+        # (ML training/eval, computational biology, cheminformatics, physics,
+        # scientific databases). MIT-licensed skill content; the flat
+        # skills/<name>/ layout matches the anthropic/huggingface taps. This is
+        # a community tap on purpose — it is deliberately NOT in
+        # tools/skills_guard.py::TRUSTED_REPOS, so it resolves at "community"
+        # trust: the security guard still scans every skill and INSTALL_POLICY
+        # only auto-installs the ones it rates "safe". Individual skills wrap
+        # third-party tools whose OWN licenses vary (some GPL, KEGG needs a
+        # commercial license for non-academic use); those terms are the
+        # installer's concern at use time and are surfaced in each skill's own
+        # frontmatter/Prerequisites, not vetted here.
+        {"repo": "K-Dense-AI/scientific-agent-skills", "path": "skills/"},
     ]
 
     def __init__(self, auth: GitHubAuth, extra_taps: Optional[List[Dict]] = None):
