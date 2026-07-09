@@ -1,9 +1,10 @@
 """Custom / Ollama (local) provider profile.
 
-Covers any endpoint registered as provider="custom", including local
-Ollama instances and OpenAI-compatible reasoning endpoints (GLM-5.2 on
-Volcengine ARK, vLLM, llama.cpp). Key quirks:
+Covers any endpoint registered as provider="custom", plus the first-class
+"ollama" provider (routed here by alias), and OpenAI-compatible reasoning
+endpoints (GLM-5.2 on Volcengine ARK, vLLM, llama.cpp). Key quirks:
   - ollama_num_ctx → extra_body.options.num_ctx (local context window)
+  - ollama_keep_alive → extra_body.keep_alive (model residence time)
   - reasoning_config disabled → extra_body.think = False
   - reasoning_config enabled + effort → top-level reasoning_effort
     (the native OpenAI-compatible format GLM/ARK expect; unset omits it
@@ -24,6 +25,8 @@ class CustomProfile(ProviderProfile):
         *,
         reasoning_config: dict | None = None,
         ollama_num_ctx: int | None = None,
+        ollama_keep_alive: int | str | None = None,
+        ollama_supports_thinking: bool | None = None,
         **ctx: Any,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         extra_body: dict[str, Any] = {}
@@ -35,6 +38,12 @@ class CustomProfile(ProviderProfile):
             options["num_ctx"] = ollama_num_ctx
             extra_body["options"] = options
 
+        # Ollama model residence time after the request (default 5m). Go
+        # duration string or seconds; -1 = keep loaded until server exit.
+        # Ignored by non-Ollama OpenAI-compatible servers.
+        if ollama_keep_alive is not None:
+            extra_body["keep_alive"] = ollama_keep_alive
+
         # Reasoning / thinking control for custom OpenAI-compatible endpoints
         # (GLM-5.2 on Volcengine ARK, vLLM, Ollama, llama.cpp, …).
         #
@@ -45,6 +54,10 @@ class CustomProfile(ProviderProfile):
         #   - enabled + no effort  → omit both, so the endpoint applies its own
         #     server-side default (do NOT force a level the user didn't pick).
         #
+        # Effort levels that only exist on the OpenAI/Codex scale are mapped
+        # to the nearest level these endpoints accept — Ollama validates
+        # against high/medium/low/max/none and 400s on "xhigh"/"minimal".
+        #
         # We deliberately do NOT emit ``think=True`` on enable: it is an
         # Ollama-only flag and thinking is already server-default-on for these
         # backends, so forcing it risks a 400 on GLM/vLLM endpoints that don't
@@ -52,10 +65,19 @@ class CustomProfile(ProviderProfile):
         if reasoning_config and isinstance(reasoning_config, dict):
             _effort = (reasoning_config.get("effort") or "").strip().lower()
             _enabled = reasoning_config.get("enabled", True)
-            if _effort == "none" or _enabled is False:
+            if ollama_supports_thinking is False:
+                # The Ollama server reports this model cannot think: any
+                # reasoning_effort 400s ('"hermes3:8b" does not support
+                # thinking') and a think flag is at best a no-op. Emit
+                # nothing — a session's effort dial carried over from a
+                # thinking model must not brick the chat. None means
+                # unknown/non-Ollama and changes nothing.
+                pass
+            elif _effort == "none" or _enabled is False:
                 extra_body["think"] = False
             elif _effort:
-                top_level["reasoning_effort"] = _effort
+                _aliases = {"xhigh": "max", "minimal": "low"}
+                top_level["reasoning_effort"] = _aliases.get(_effort, _effort)
 
         return extra_body, top_level
 

@@ -264,6 +264,12 @@ def test_current_custom_endpoint_passthrough_marks_current_row(monkeypatch):
     monkeypatch.setattr("hermes_cli.providers.HERMES_OVERLAYS", {})
     monkeypatch.setattr("hermes_cli.models.fetch_openrouter_models",
                         lambda *a, **kw: [])
+    # The endpoint is offline in this scenario: the live /v1/models probe must
+    # fail so the declared model list wins. Without this mock a REAL Ollama
+    # server on localhost:11434 (common on dev machines) answers the probe and
+    # its installed models replace the declared ones.
+    monkeypatch.setattr("hermes_cli.models.fetch_api_models",
+                        lambda *a, **kw: [])
 
     result = model_switch.list_picker_providers(
         current_provider="custom:ollama",

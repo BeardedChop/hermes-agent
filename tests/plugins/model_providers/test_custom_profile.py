@@ -9,8 +9,8 @@ was silently dropped for every custom endpoint.
 These tests pin the wire-shape contract:
   - disabled            → extra_body.think = False
   - enabled + effort    → top-level reasoning_effort (native OpenAI-compat
-                          format GLM/ARK expect), passed through verbatim
-                          including ``max``/``xhigh``
+                          format GLM/ARK expect); OpenAI-only levels
+                          (xhigh/minimal) map to the nearest accepted level
   - enabled + no effort → nothing emitted (endpoint's server default applies)
   - ollama_num_ctx      → extra_body.options.num_ctx, orthogonal to reasoning
 """
@@ -65,7 +65,7 @@ class TestCustomReasoningWireShape:
         assert tl == {}
 
     @pytest.mark.parametrize(
-        "effort", ["minimal", "low", "medium", "high", "xhigh", "max"]
+        "effort", ["low", "medium", "high", "max"]
     )
     def test_enabled_effort_goes_top_level(self, custom_profile, effort):
         """enabled + effort → TOP-LEVEL reasoning_effort, passed through verbatim.
@@ -79,6 +79,26 @@ class TestCustomReasoningWireShape:
         )
         assert tl == {"reasoning_effort": effort}
         assert "reasoning_effort" not in eb
+        assert "think" not in eb
+
+    @pytest.mark.parametrize(
+        ("effort", "expected"), [("xhigh", "max"), ("minimal", "low")]
+    )
+    def test_openai_only_efforts_map_to_endpoint_levels(
+        self, custom_profile, effort, expected
+    ):
+        """Efforts that only exist on the OpenAI/Codex scale map to the
+        nearest level these endpoints accept.
+
+        Ollama validates reasoning_effort against high/medium/low/max/none
+        and rejects "xhigh"/"minimal" with HTTP 400; GLM documents "high" and
+        "max". Carrying a session's effort dial across a provider switch to a
+        local model must not brick the chat.
+        """
+        eb, tl = custom_profile.build_api_kwargs_extras(
+            reasoning_config={"enabled": True, "effort": effort}, model="glm-5.2"
+        )
+        assert tl == {"reasoning_effort": expected}
         assert "think" not in eb
 
     def test_enabled_without_effort_emits_nothing(self, custom_profile):

@@ -1817,6 +1817,12 @@ export const zhHant = defineLocale({
     connected: '已連線',
     featuredPitch: '一個訂閱，300+ 前沿模型 — 執行 Hermes 的建議方式',
     openRouterPitch: '一個金鑰，數百個模型 — 穩定的預設選擇',
+    detectedLocal: {
+      detected: '已偵測到',
+      modelsInstalled: (n: number) => `已安裝 ${n} 個模型 — 在本機執行`,
+      use: '使用',
+      connectFailed: '無法連線到本機伺服器。'
+    },
     apiKeyOptions: {
       openrouter: { short: '一個金鑰，多個模型', description: '用一個金鑰存取數百個模型。適合新安裝的預設選擇。' },
       openai: { short: 'GPT 等級模型', description: '直接存取 OpenAI 模型。' },
@@ -1880,6 +1886,8 @@ export const zhHant = defineLocale({
     noAuthenticatedProviders: '沒有已驗證的提供方。',
     pro: 'Pro',
     proNeedsSubscription: 'Pro 模型需要付費 Nous 訂閱。',
+    noTools: '不支援工具',
+    noToolsTitle: '該模型不支援工具呼叫 — 大多數智能體功能將無法使用。',
     free: '免費',
     freeTier: '免費層',
     priceTitle: '每百萬 Token 的輸入/輸出價格'

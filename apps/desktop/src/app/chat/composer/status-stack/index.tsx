@@ -23,6 +23,7 @@ import { $previewStatusBySession, dismissPreviewArtifact } from '@/store/preview
 import { $threadScrolledUp } from '@/store/thread-scroll'
 import { openSessionInNewWindow } from '@/store/windows'
 
+import { OllamaColdStartRow, useOllamaColdStart } from './ollama-cold-start'
 import { PreviewStatusRow } from './preview-row'
 import { StatusItemRow } from './status-row'
 
@@ -171,6 +172,13 @@ export function ComposerStatusStack({ queue, sessionId }: ComposerStatusStackPro
   // still render them as their own always-visible block.
   if (previewRows.length > 0 && !hasBackgroundGroup) {
     sections.push({ key: 'preview', node: previewBlock })
+  }
+
+  // Cold-start feedback while a local Ollama model loads its weights.
+  const ollamaColdStartModel = useOllamaColdStart()
+
+  if (ollamaColdStartModel) {
+    sections.push({ key: 'ollama-cold-start', node: <OllamaColdStartRow model={ollamaColdStartModel} /> })
   }
 
   if (queue) {

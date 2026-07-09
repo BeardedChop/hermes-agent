@@ -33,6 +33,8 @@ Substrate facts (verified May 2026):
 
 from __future__ import annotations
 
+import threading
+
 from dataclasses import dataclass, replace
 from typing import Optional
 
@@ -252,13 +254,23 @@ def build_models_payload(
 
 
 def _apply_capabilities(rows: list[dict]) -> None:
-    """Attach a ``{model: {fast, reasoning}}`` map to each provider row.
+    """Attach a per-model capabilities map to each provider row.
+
+    Each entry: ``{fast, reasoning, tools?, vision?, context_length?,
+    parameter_size?, quantization?}``. Only ``fast`` and ``reasoning`` are
+    always present; the rest are included when a metadata source actually
+    reported them, so the UI can distinguish "no tool support" from "unknown".
 
     `fast` mirrors ``model_supports_fast_mode`` (the same gate the runtime
     enforces). `reasoning` comes from the models.dev catalog when known and
     defaults to True otherwise — the effort dial is broadly accepted and a
     no-op on models that ignore it, whereas hiding it from a capable-but-
     uncatalogued model is the worse failure.
+
+    Local Ollama rows are enriched from the server's native ``/api/show``
+    instead of models.dev: local tags are arbitrary and quant-specific
+    (``qwen3:27b-q4_K_M``, user Modelfile creations), so the catalog rarely
+    matches, while ``/api/show`` is authoritative for what is on disk.
     """
     from hermes_cli.models import model_supports_fast_mode
 
@@ -269,24 +281,117 @@ def _apply_capabilities(rows: list[dict]) -> None:
 
     for row in rows:
         slug = row.get("slug") or ""
-        caps: dict[str, dict[str, bool]] = {}
+        caps: dict[str, dict] = {}
 
         for model in row.get("models") or []:
-            reasoning = True
+            entry: dict = {
+                "fast": bool(model_supports_fast_mode(model)),
+                "reasoning": True,
+            }
             if get_model_capabilities is not None and slug:
                 try:
                     meta = get_model_capabilities(slug, model)
                     if meta is not None:
-                        reasoning = bool(meta.supports_reasoning)
+                        entry["reasoning"] = bool(meta.supports_reasoning)
+                        entry["tools"] = bool(meta.supports_tools)
+                        entry["vision"] = bool(meta.supports_vision)
+                        if meta.context_window:
+                            entry["context_length"] = int(meta.context_window)
                 except Exception:
-                    reasoning = True
+                    pass
 
-            caps[model] = {
-                "fast": bool(model_supports_fast_mode(model)),
-                "reasoning": reasoning,
-            }
+            caps[model] = entry
 
         row["capabilities"] = caps
+
+    _apply_ollama_native_capabilities(rows)
+
+
+def _apply_ollama_native_capabilities(rows: list[dict]) -> None:
+    """Override local Ollama rows' capabilities with native ``/api/show`` data.
+
+    Cache-only on the request path: the picker/settings payload must never
+    wait on per-model ``/api/show`` round-trips (they serialize and stall the
+    settings skeleton). Missing metadata is backfilled by a background thread
+    and appears on the next payload build.
+    """
+    ollama_rows = [r for r in rows if str(r.get("slug", "")).lower() == "ollama"]
+    if not ollama_rows:
+        return
+
+    import time as _time
+
+    now = _time.time()
+    missing: list[tuple[str, str]] = []
+    for row in ollama_rows:
+        base_url = str(row.get("api_url", "") or "").strip() or None
+        caps = row.get("capabilities") or {}
+        for model in row.get("models") or []:
+            cache_key = (base_url or "", model)
+            cached = _OLLAMA_META_CACHE.get(cache_key)
+            if cached is None or (now - cached[0]) >= _OLLAMA_META_CACHE_TTL:
+                missing.append(cache_key)
+                continue
+            meta = cached[1]
+            if not meta:
+                continue
+            entry = caps.setdefault(model, {"fast": False, "reasoning": True})
+            native = meta.get("capabilities")
+            if isinstance(native, list):
+                entry["tools"] = "tools" in native
+                entry["vision"] = "vision" in native
+                entry["reasoning"] = "thinking" in native
+            if meta.get("context_length"):
+                entry["context_length"] = int(meta["context_length"])
+            if meta.get("parameter_size"):
+                entry["parameter_size"] = meta["parameter_size"]
+            if meta.get("quantization"):
+                entry["quantization"] = meta["quantization"]
+        row["capabilities"] = caps
+
+    if missing:
+        _start_ollama_meta_backfill(missing)
+
+
+def _start_ollama_meta_backfill(keys: list[tuple[str, str]]) -> None:
+    """Fetch missing model metadata off the request path."""
+    import time as _time
+
+    with _OLLAMA_META_BACKFILL_LOCK:
+        todo = [k for k in keys if k not in _OLLAMA_META_IN_FLIGHT]
+        if not todo:
+            return
+        _OLLAMA_META_IN_FLIGHT.update(todo)
+
+    def _backfill() -> None:
+        try:
+            from hermes_cli.models import fetch_ollama_model_metadata
+
+            for base_url, model in todo:
+                try:
+                    meta = fetch_ollama_model_metadata(
+                        model, base_url=base_url or None, timeout=5.0
+                    )
+                    if meta:
+                        _OLLAMA_META_CACHE[(base_url, model)] = (_time.time(), meta)
+                except Exception:
+                    pass
+        finally:
+            with _OLLAMA_META_BACKFILL_LOCK:
+                _OLLAMA_META_IN_FLIGHT.difference_update(todo)
+
+    threading.Thread(
+        target=_backfill, daemon=True, name="ollama-meta-backfill"
+    ).start()
+
+
+# Metadata for an installed model changes only when the user re-pulls or
+# edits a Modelfile — an hour of staleness is fine and keeps repeated picker
+# opens off the per-model /api/show round-trips.
+_OLLAMA_META_CACHE: dict = {}
+_OLLAMA_META_CACHE_TTL = 3600.0
+_OLLAMA_META_BACKFILL_LOCK = threading.Lock()
+_OLLAMA_META_IN_FLIGHT: set = set()
 
 
 # ─── Internal: row post-processing ──────────────────────────────────────
@@ -342,6 +447,14 @@ def _filter_explicit_provider_rows(rows: list[dict], ctx: ConfigContext) -> list
             # provider. Hide it from explicit-only pickers unless it is the
             # current provider (handled above).
             continue
+        if slug == "ollama":
+            # Local Ollama servers are keyless by design — reachability is
+            # the credential, and the row only exists when the server
+            # answered the probe. A running local server is as explicit as a
+            # pasted API key; is_provider_explicitly_configured() can't see
+            # it because there is no env var or auth-store entry to find.
+            kept.append(row)
+            continue
         if is_provider_explicitly_configured(slug):
             kept.append(row)
     return kept
@@ -378,11 +491,16 @@ def _apply_picker_hints(rows: list[dict]) -> None:
         )
         row["auth_type"] = auth_type
         row["key_env"] = key_env
-        row["warning"] = (
-            f"paste {key_env} to activate"
-            if auth_type == "api_key" and key_env
-            else f"run `hermes model` to configure ({auth_type})"
-        )
+        if row["slug"] == "ollama":
+            # Keyless local server: the fix for an unconfigured row is
+            # starting the server, not pasting a key.
+            row["warning"] = "start Ollama (localhost:11434) to activate"
+        else:
+            row["warning"] = (
+                f"paste {key_env} to activate"
+                if auth_type == "api_key" and key_env
+                else f"run `hermes model` to configure ({auth_type})"
+            )
 
 
 def _reorder_canonical(rows: list[dict]) -> list[dict]:

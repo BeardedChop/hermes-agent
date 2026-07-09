@@ -1642,6 +1642,21 @@ def list_authenticated_providers(
             live = [current_model]
         curated["lmstudio"] = live
 
+    # Local Ollama server: no static catalog and no key requirement — the row
+    # exists when the server is reachable (or is the configured provider).
+    # Localhost connection-refused fails in milliseconds, so this stays cheap
+    # when no server is running. Base URL precedence mirrors LM Studio:
+    # active config's base_url (when current provider is ollama) > localhost.
+    if "ollama" not in curated:
+        from hermes_cli.models import fetch_ollama_local_models
+        is_current_ollama = current_provider.strip().lower() == "ollama"
+        ollama_base = current_base_url if is_current_ollama and current_base_url else None
+        ollama_live = fetch_ollama_local_models(base_url=ollama_base, timeout=1.5)
+        if not ollama_live and is_current_ollama and current_model:
+            ollama_live = [current_model]
+        if ollama_live or is_current_ollama:
+            curated["ollama"] = ollama_live
+
     # --- 1. Check Hermes-mapped providers ---
     from hermes_cli.models import _AGGREGATOR_PROVIDERS as _AGG_PROVIDERS
     from hermes_cli.providers import ALIASES as _PROVIDER_ALIAS_TABLE
@@ -1807,6 +1822,11 @@ def list_authenticated_providers(
                     has_creds = True
             except Exception as exc:
                 logger.debug("Anthropic external creds check failed: %s", exc)
+        # Local Ollama server: unauthenticated by design, so reachability is
+        # the credential. The curated probe above only adds the key when the
+        # server responded (or it is the configured provider).
+        if not has_creds and hermes_slug == "ollama":
+            has_creds = "ollama" in curated
         if not has_creds:
             continue
 

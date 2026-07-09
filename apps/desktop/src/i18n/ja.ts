@@ -1874,6 +1874,12 @@ export const ja = defineLocale({
     connected: '接続済み',
     featuredPitch: '1 つのサブスクリプションで 300 以上の最先端モデル — Hermes を実行するための推奨方法',
     openRouterPitch: '1 つのキーで数百のモデル — 堅実なデフォルト',
+    detectedLocal: {
+      detected: '検出済み',
+      modelsInstalled: (n: number) => `${n} 個のモデルがインストール済み — このマシンで実行`,
+      use: '使用',
+      connectFailed: 'ローカルサーバーに接続できませんでした。'
+    },
     apiKeyOptions: {
       openrouter: {
         short: '1 つのキーで多くのモデル',
@@ -1943,6 +1949,8 @@ export const ja = defineLocale({
     noAuthenticatedProviders: '認証済みプロバイダーがありません。',
     pro: 'Pro',
     proNeedsSubscription: 'Pro モデルには有料の Nous サブスクリプションが必要です。',
+    noTools: 'ツール非対応',
+    noToolsTitle: 'このモデルはツール呼び出しに対応していません — ほとんどのエージェント機能が動作しません。',
     free: '無料',
     freeTier: '無料プラン',
     priceTitle: '100 万トークンあたりの入力/出力価格'

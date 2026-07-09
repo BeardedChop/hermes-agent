@@ -580,6 +580,23 @@ export interface Translations {
       providerDefault: string
       tasks: Record<string, AuxTaskCopy>
     }
+    ollama: {
+      categoryTitle: string
+      running: (n: number) => string
+      notRunning: string
+      desc: string
+      loaded: string
+      load: string
+      loadFailed: string
+      deleteLabel: (model: string) => string
+      deleteFailed: string
+      getModels: string
+      pull: string
+      pullPlaceholder: string
+      pullDone: (model: string) => string
+      pullFailed: string
+      kvCacheAdvisory: (model: string, loaded: string, trained: string) => string
+    }
     providers: {
       connectAccount: string
       haveApiKey: string
@@ -1419,6 +1436,7 @@ export interface Translations {
     stop: string
     dismiss: string
     exit: (code: number) => string
+    ollamaLoading: (model: string) => string
     coding: {
       title: string
       noBranch: string
@@ -1554,6 +1572,12 @@ export interface Translations {
     connected: string
     featuredPitch: string
     openRouterPitch: string
+    detectedLocal: {
+      detected: string
+      modelsInstalled: (n: number) => string
+      use: string
+      connectFailed: string
+    }
     apiKeyOptions: Record<string, { short: string; description: string }>
     backToSignIn: string
     getKey: string
@@ -1605,6 +1629,8 @@ export interface Translations {
     noAuthenticatedProviders: string
     pro: string
     proNeedsSubscription: string
+    noTools: string
+    noToolsTitle: string
     free: string
     freeTier: string
     priceTitle: string

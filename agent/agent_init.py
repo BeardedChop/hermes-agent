@@ -2012,6 +2012,22 @@ def init_agent(
             agent._ollama_num_ctx,
         )
 
+    # ── Ollama keep_alive ──
+    # How long the server keeps the model resident after a request (Ollama
+    # default: 5 minutes). Set model.ollama_keep_alive in config.yaml to a Go
+    # duration string ("30m", "2h") or seconds; -1 keeps it loaded until the
+    # server exits. Sent per-request alongside num_ctx.
+    agent._ollama_keep_alive = None
+    if isinstance(_model_cfg, dict):
+        _keep_alive_raw = _model_cfg.get("ollama_keep_alive")
+        if _keep_alive_raw is not None:
+            if isinstance(_keep_alive_raw, (int, float)):
+                agent._ollama_keep_alive = int(_keep_alive_raw)
+            else:
+                _keep_alive_str = str(_keep_alive_raw).strip()
+                if _keep_alive_str:
+                    agent._ollama_keep_alive = _keep_alive_str
+
     # Codex gpt-5.x autoraise notice: show at most once per profile/config
     # state. Without the persisted marker the notice re-fires on every agent
     # init — and the gateway rebuilds the agent per inbound message, so Discord

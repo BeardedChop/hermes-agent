@@ -782,6 +782,42 @@ export async function saveOnboardingApiKey(
   }
 }
 
+// Configure a DETECTED local Ollama server. Unlike the generic local-endpoint
+// path above, the server identity is already fingerprinted and the user has
+// picked a concrete model from its installed list, so there is no probe step —
+// persist provider=ollama + base_url + model and verify the runtime.
+export async function saveOnboardingDetectedOllama(baseUrl: string, model: string, ctx: OnboardingContext) {
+  const url = baseUrl.trim()
+  const chosen = model.trim()
+
+  if (!url || !chosen) {
+    return { ok: false, message: 'Pick a model first.' }
+  }
+
+  try {
+    await setModelAssignment({ scope: 'main', provider: 'ollama', model: chosen, base_url: url })
+    await ctx.requestGateway('reload.env').catch(() => undefined)
+
+    const runtime = await checkRuntime(ctx, 'ollama')
+
+    if (!runtime.ready) {
+      const detail = (runtime.reason ?? '').trim()
+
+      return { ok: false, message: detail || `Saved, but Hermes still cannot reach ${url}.` }
+    }
+
+    notifyReady('Ollama')
+    completeDesktopOnboarding()
+    ctx.onCompleted?.()
+
+    return { ok: true }
+  } catch (error) {
+    notifyError(error, 'Could not save Ollama endpoint')
+
+    return { ok: false, message: errMessage(error) }
+  }
+}
+
 // Configure a local / self-hosted OpenAI-compatible endpoint (vLLM, llama.cpp,
 // Ollama, …). Unlike API-key providers, a local endpoint is defined by its URL
 // and usually needs NO key. The runtime resolver reads model.base_url from

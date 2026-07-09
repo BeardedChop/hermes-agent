@@ -1,7 +1,10 @@
+import { useState } from 'react'
+
 import { RowButton } from '@/components/ui/row-button'
 import { useI18n } from '@/i18n'
-import { Check, ChevronRight, Terminal } from '@/lib/icons'
-import type { OAuthProvider } from '@/types/hermes'
+import { Check, ChevronRight, Cpu, Loader2, Terminal } from '@/lib/icons'
+import { cn } from '@/lib/utils'
+import type { LocalServerInfo, OAuthProvider } from '@/types/hermes'
 
 const PROVIDER_DISPLAY: Record<string, { order: number; title: string }> = {
   nous: { order: 0, title: 'Nous Portal' },
@@ -114,5 +117,85 @@ export function ProviderRow({
       </div>
       <Trail className="size-4 text-muted-foreground transition group-hover:text-foreground" />
     </RowButton>
+  )
+}
+
+/**
+ * A local model server found by /api/local-servers/detect (currently the
+ * Ollama row; LM Studio detection reuses the shape later). Collapsed: a
+ * provider row showing "detected · N models installed". Expanded: the
+ * installed-model list, each row a one-click connect — no URL typing, no
+ * blind first-model assignment.
+ */
+export function DetectedLocalServerRow({
+  onConnect,
+  server
+}: {
+  onConnect: (baseUrl: string, model: string) => Promise<{ ok: boolean; message?: string }>
+  server: LocalServerInfo
+}) {
+  const { t } = useI18n()
+  const copy = t.onboarding.detectedLocal
+  const [expanded, setExpanded] = useState(false)
+  const [busyModel, setBusyModel] = useState<null | string>(null)
+  const [error, setError] = useState('')
+
+  const connect = async (model: string) => {
+    if (busyModel) {
+      return
+    }
+
+    setBusyModel(model)
+    setError('')
+    const result = await onConnect(server.base_url, model)
+
+    if (!result.ok) {
+      setError(result.message || copy.connectFailed)
+      setBusyModel(null)
+    }
+    // On success the overlay unmounts via completeDesktopOnboarding().
+  }
+
+  return (
+    <div className="rounded-[6px] transition-colors">
+      <RowButton className={PROVIDER_ROW_CLASS} onClick={() => setExpanded(open => !open)}>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Cpu className="size-4 shrink-0 text-primary" />
+            <span className="text-[length:var(--conversation-text-font-size)] font-semibold">Ollama</span>
+            <span className="inline-flex items-center gap-1 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+              <Check className="size-3" />
+              {copy.detected}
+            </span>
+          </div>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.modelsInstalled(server.models.length)}</p>
+        </div>
+        <ChevronRight
+          className={cn('size-4 text-muted-foreground transition group-hover:text-foreground', expanded && 'rotate-90')}
+        />
+      </RowButton>
+      {expanded ? (
+        <div className="grid gap-0.5 px-3 pb-2">
+          {server.models.map(model => (
+            <RowButton
+              className="group flex w-full items-center justify-between gap-3 rounded-[6px] px-3 py-1.5 text-left font-mono text-xs transition-colors hover:bg-(--ui-control-hover-background)"
+              disabled={busyModel !== null}
+              key={model}
+              onClick={() => void connect(model)}
+            >
+              <span className="truncate">{model}</span>
+              {busyModel === model ? (
+                <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+              ) : (
+                <span className="shrink-0 text-[0.64rem] uppercase tracking-wide text-muted-foreground opacity-0 transition group-hover:opacity-100">
+                  {copy.use}
+                </span>
+              )}
+            </RowButton>
+          ))}
+          {error ? <p className="px-3 pt-1 text-xs leading-5 text-destructive">{error}</p> : null}
+        </div>
+      ) : null}
+    </div>
   )
 }

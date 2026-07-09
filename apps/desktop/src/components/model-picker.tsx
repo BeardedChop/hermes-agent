@@ -1,11 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { useI18n } from '@/i18n'
 import { requestModelOptions } from '@/lib/model-options'
 import { currentPickerSelection } from '@/lib/model-status-label'
 import { normalize } from '@/lib/text'
-import type { ModelOptionProvider, ModelPricing } from '@/types/hermes'
+import type { ModelCapabilities, ModelOptionProvider, ModelPricing } from '@/types/hermes'
 
 import type { HermesGateway } from '../hermes'
 import { cn } from '../lib/utils'
@@ -60,6 +60,30 @@ export function ModelPickerDialog({
   })
 
   const providers = modelOptions.data?.providers ?? []
+
+  // Local Ollama capability metadata is backfilled server-side off the
+  // request path (the payload returns immediately; native /api/show data
+  // lands moments later). When an ollama row is missing its enrichment
+  // (no tools flag), refetch once shortly after so badges appear in-place
+  // instead of on the next open.
+  const ollamaUnenriched = providers.some(
+    p =>
+      p.slug === 'ollama' &&
+      (p.models?.length ?? 0) > 0 &&
+      p.models?.some(m => p.capabilities?.[m]?.tools === undefined)
+  )
+
+  const refetchOptions = modelOptions.refetch
+
+  useEffect(() => {
+    if (!open || !ollamaUnenriched) {
+      return
+    }
+
+    const timer = setTimeout(() => void refetchOptions(), 1_500)
+
+    return () => clearTimeout(timer)
+  }, [open, ollamaUnenriched, refetchOptions])
 
   const { model: optionsModel, provider: optionsProvider } = currentPickerSelection(
     !!sessionId,
@@ -205,6 +229,10 @@ function ModelResults({
               const isCurrent = model === currentModel && provider.slug === currentProvider
               const price = provider.pricing?.[model]
               const locked = unavailable.has(model)
+              const caps = provider.capabilities?.[model]
+              // Only an explicit tools:false demotes — absent means unknown,
+              // and models.dev gaps must not smear working models.
+              const noTools = caps?.tools === false
 
               return (
                 <CommandItem
@@ -212,7 +240,8 @@ function ModelResults({
                     'flex items-center gap-2 pl-6 font-mono',
                     isCurrent &&
                       'bg-primary text-primary-foreground data-[selected=true]:bg-primary data-[selected=true]:text-primary-foreground',
-                    locked && 'cursor-not-allowed opacity-45'
+                    locked && 'cursor-not-allowed opacity-45',
+                    noTools && !isCurrent && 'opacity-60'
                   )}
                   disabled={locked}
                   key={`${provider.slug}:${model}`}
@@ -224,6 +253,20 @@ function ModelResults({
                   value={`${provider.slug}:${model}`}
                 >
                   <span className="min-w-0 flex-1 truncate">{model}</span>
+                  {noTools && (
+                    <span
+                      className={cn(
+                        'shrink-0 rounded-sm px-1 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide',
+                        isCurrent
+                          ? 'bg-primary-foreground/20'
+                          : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                      )}
+                      title={copy.noToolsTitle}
+                    >
+                      {copy.noTools}
+                    </span>
+                  )}
+                  <ModelMeta caps={caps} isCurrent={isCurrent} />
                   {locked && (
                     <span className="shrink-0 text-[0.62rem] uppercase tracking-wide opacity-80">{copy.pro}</span>
                   )}
@@ -240,6 +283,44 @@ function ModelResults({
         )
       })}
     </>
+  )
+}
+
+// Compact local-model metadata: context window (agent-critical) plus
+// parameter size / quantization when the native server reported them.
+// Renders nothing for models with no metadata beyond the fast/reasoning flags.
+function ModelMeta({ caps, isCurrent }: { caps?: ModelCapabilities; isCurrent: boolean }) {
+  if (!caps) {
+    return null
+  }
+
+  const parts: string[] = []
+
+  if (caps.context_length) {
+    parts.push(caps.context_length >= 1024 ? `${Math.round(caps.context_length / 1024)}k` : String(caps.context_length))
+  }
+
+  if (caps.parameter_size) {
+    parts.push(caps.parameter_size)
+  }
+
+  if (caps.quantization) {
+    parts.push(caps.quantization)
+  }
+
+  if (parts.length === 0) {
+    return null
+  }
+
+  return (
+    <span
+      className={cn(
+        'shrink-0 text-[0.66rem] tabular-nums',
+        isCurrent ? 'text-primary-foreground/80' : 'text-muted-foreground'
+      )}
+    >
+      {parts.join(' · ')}
+    </span>
   )
 }
 

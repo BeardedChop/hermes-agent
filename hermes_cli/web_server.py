@@ -5345,6 +5345,434 @@ def get_recommended_default_model(provider: str = ""):
         return {"provider": slug, "model": "", "free_tier": None}
 
 
+# Well-known local model-server ports probed by /api/local-servers/detect.
+# Each entry: (server type reported by detect_local_server_type, default root).
+_LOCAL_SERVER_PROBE_ROOTS: list[tuple[str, str]] = [
+    ("ollama", "http://127.0.0.1:11434"),
+    ("lm-studio", "http://127.0.0.1:1234"),
+]
+
+# Session-lived cache: detection results change rarely (a server starting or
+# stopping), and onboarding + settings may both request them in quick
+# succession. refresh=1 busts it, mirroring /api/model/options.
+_local_servers_cache: dict = {"at": 0.0, "servers": None}
+_LOCAL_SERVERS_CACHE_TTL = 60.0
+
+
+def _detect_local_servers_sync(profile: Optional[str]) -> list[dict]:
+    """Probe well-known local ports (plus the configured base_url) for
+    running model servers.
+
+    Returns one entry per candidate root:
+      {type, base_url, reachable, models: [...], source}
+    ``base_url`` is the OpenAI-compatible endpoint (``<root>/v1``).
+    ``type`` is ``detect_local_server_type()``'s fingerprint when reachable,
+    else the expected type for the well-known port. The response shape keeps
+    room for a future installed/running/managed lifecycle distinction.
+    """
+    from agent.model_metadata import detect_local_server_type, is_local_endpoint
+    from hermes_cli.models import (
+        _ollama_server_reachable,
+        fetch_ollama_local_models,
+        probe_lmstudio_models,
+    )
+
+    candidates: list[tuple[str, str, str]] = [
+        (expected, root, "well-known") for expected, root in _LOCAL_SERVER_PROBE_ROOTS
+    ]
+
+    # Also probe the configured base_url when it is local and isn't one of
+    # the defaults — the remote-Ollama-over-Tailscale case. Remote provider
+    # URLs (api.anthropic.com, ...) are never local servers; skip them.
+    try:
+        with _profile_scope(profile):
+            cfg = load_config()
+        model_cfg = cfg.get("model") or {}
+        cfg_url = str(model_cfg.get("base_url", "") or "").strip().rstrip("/")
+        if cfg_url and is_local_endpoint(cfg_url):
+            cfg_root = cfg_url[:-3].rstrip("/") if cfg_url.endswith("/v1") else cfg_url
+            known_roots = {root for _, root in _LOCAL_SERVER_PROBE_ROOTS}
+            if cfg_root and cfg_root not in known_roots:
+                candidates.append(("", cfg_root, "configured"))
+    except Exception:
+        pass
+
+    servers: list[dict] = []
+    for expected_type, root, source in candidates:
+        detected = None
+        # Fast TCP pre-check before the HTTP fingerprint: a down server must
+        # cost milliseconds, not detect_local_server_type's sequential HTTP
+        # timeouts (which stack across candidates and blow the client's
+        # request timeout).
+        if _ollama_server_reachable(root):
+            try:
+                detected = detect_local_server_type(root)
+            except Exception:
+                detected = None
+
+        reachable = detected is not None
+        models: list[str] = []
+        if reachable:
+            try:
+                if detected == "ollama":
+                    models = fetch_ollama_local_models(base_url=root, timeout=2.0)
+                elif detected == "lm-studio":
+                    models = probe_lmstudio_models(base_url=root, timeout=2.0) or []
+            except Exception:
+                models = []
+
+        servers.append(
+            {
+                "type": detected or expected_type or "unknown",
+                "base_url": root + "/v1",
+                "reachable": reachable,
+                "models": models,
+                "source": source,
+            }
+        )
+    return servers
+
+
+@app.get("/api/local-servers/detect")
+async def detect_local_servers(profile: Optional[str] = None, refresh: bool = False):
+    """Detect running local model servers (Ollama, LM Studio).
+
+    Probes well-known localhost ports plus the configured ``model.base_url``,
+    fingerprinting each with ``detect_local_server_type()`` and listing the
+    installed models for recognized servers. Onboarding uses this to offer a
+    detected server as a provider choice instead of asking for a URL.
+    """
+    import time as _time
+
+    now = _time.time()
+    if (
+        not refresh
+        and _local_servers_cache["servers"] is not None
+        and (now - _local_servers_cache["at"]) < _LOCAL_SERVERS_CACHE_TTL
+    ):
+        return {"servers": _local_servers_cache["servers"]}
+
+    try:
+        servers = await asyncio.to_thread(_detect_local_servers_sync, profile)
+    except Exception:
+        _log.exception("GET /api/local-servers/detect failed")
+        raise HTTPException(status_code=500, detail="Local server detection failed")
+
+    _local_servers_cache["servers"] = servers
+    _local_servers_cache["at"] = now
+    return {"servers": servers}
+
+
+# ---------------------------------------------------------------------------
+# Local Ollama model management
+# ---------------------------------------------------------------------------
+#
+# Management actions (list/pull/delete/load) go through Ollama's native /api
+# surface; chat inference stays on the OpenAI-compatible /v1 endpoint. Pull
+# runs as a background job the UI polls — the same worker+poll shape as the
+# OAuth device-code sessions above.
+
+_ollama_pull_jobs: dict = {}
+_ollama_pull_jobs_lock = threading.Lock()
+_OLLAMA_PULL_JOB_TTL = 3600.0
+
+
+class OllamaModelAction(BaseModel):
+    model: str = ""
+    keep_alive: Optional[str] = None
+    profile: Optional[str] = None
+
+
+def _on_ollama_models_changed() -> None:
+    """Bust the cached ollama model-id list after a pull/delete.
+
+    The picker payload reads ``cached_provider_model_ids("ollama")`` (1h disk
+    TTL); without this a just-pulled model doesn't appear in the model picker
+    until the cache expires.
+    """
+    try:
+        from hermes_cli.models import clear_provider_models_cache
+
+        clear_provider_models_cache("ollama")
+    except Exception:
+        pass
+
+
+def _ollama_connection(profile: Optional[str]) -> tuple[str, str]:
+    """Resolve (base_url, api_key) for the local Ollama server.
+
+    Uses model.base_url/api_key from config when the configured provider is
+    ollama; otherwise the localhost default. Returns the server root form
+    accepted by the hermes_cli.models helpers (they normalize /v1 away).
+    """
+    base_url = ""
+    api_key = ""
+    try:
+        with _profile_scope(profile):
+            cfg = load_config()
+        model_cfg = cfg.get("model") or {}
+        provider = str(model_cfg.get("provider", "") or "").strip().lower()
+        if provider == "ollama":
+            base_url = str(model_cfg.get("base_url", "") or "").strip()
+            api_key = str(model_cfg.get("api_key", "") or "").strip()
+    except Exception:
+        pass
+    return base_url or "http://127.0.0.1:11434", api_key
+
+
+@app.get("/api/ollama/models")
+async def get_ollama_models(profile: Optional[str] = None):
+    """Installed + running models and the curated recommendations.
+
+    Single round-trip payload for the desktop management panel:
+    ``{reachable, installed: [...], running: [...], recommended: [...]}``.
+    ``recommended`` excludes already-installed models.
+    """
+    from hermes_cli.models import (
+        OLLAMA_RECOMMENDED_MODELS,
+        fetch_ollama_installed_model_details,
+        fetch_ollama_running_models,
+    )
+
+    base_url, api_key = _ollama_connection(profile)
+
+    # Fresh reachability probe first (bypasses the negative cache): this is
+    # the status endpoint the desktop polls, so it must notice a just-started
+    # server immediately. Success clears the cached failure, which un-blinds
+    # the fetchers below in the same request.
+    from hermes_cli.models import _ollama_server_reachable, _ollama_server_root
+
+    root = _ollama_server_root(base_url)
+    reachable = bool(root) and await asyncio.to_thread(
+        _ollama_server_reachable, root, 0.3, False
+    )
+
+    installed: list = []
+    running: list = []
+    if reachable:
+        def _collect():
+            return (
+                fetch_ollama_installed_model_details(
+                    api_key=api_key, base_url=base_url, timeout=3.0
+                ),
+                fetch_ollama_running_models(
+                    api_key=api_key, base_url=base_url, timeout=3.0
+                ),
+            )
+
+        try:
+            installed, running = await asyncio.to_thread(_collect)
+        except Exception:
+            _log.exception("GET /api/ollama/models failed")
+            raise HTTPException(
+                status_code=500, detail="Failed to query the Ollama server"
+            )
+
+    installed_names = {m["name"] for m in installed}
+    # A recommendation is "installed" if any tag of the same base model is —
+    # qwen3:8b covers qwen3:8b-q4_K_M etc.
+    installed_bases = {n.split(":", 1)[0] for n in installed_names}
+    recommended = [
+        r
+        for r in OLLAMA_RECOMMENDED_MODELS
+        if r["model"] not in installed_names
+        and r["model"].split(":", 1)[0] not in installed_bases
+    ]
+
+    # KV-cache advisory (see docs/plans/2026-07-08-001): Ollama runs the KV
+    # cache at f16 unless the operator sets OLLAMA_KV_CACHE_TYPE, and never
+    # quantizes it to fit a larger window. When a loaded model runs at well
+    # under half its trained context, q8_0 KV would roughly double the usable
+    # window in the same memory — surface that once per panel load. Inference:
+    # we cannot read a remote server's env, only compare loaded vs trained.
+    kv_cache_advisory = None
+    try:
+        from hermes_cli.models import fetch_ollama_model_metadata
+
+        for run in running:
+            loaded_ctx = int(run.get("context_length") or 0)
+            if loaded_ctx <= 0:
+                continue
+            meta = await asyncio.to_thread(
+                fetch_ollama_model_metadata, run["name"], base_url, api_key, 2.0
+            )
+            trained_ctx = int((meta or {}).get("context_length") or 0)
+            if trained_ctx > 0 and loaded_ctx * 2 <= trained_ctx:
+                kv_cache_advisory = {
+                    "model": run["name"],
+                    "loaded_context": loaded_ctx,
+                    "trained_context": trained_ctx,
+                }
+                break
+    except Exception:
+        kv_cache_advisory = None
+
+    return {
+        "reachable": reachable,
+        "installed": installed,
+        "running": running,
+        "recommended": recommended,
+        "kv_cache_advisory": kv_cache_advisory,
+    }
+
+
+def _run_ollama_pull_job(job_id: str, model: str, base_url: str, api_key: str) -> None:
+    """Worker: stream native /api/pull NDJSON progress into the job record."""
+    import urllib.request as _urlreq
+
+    root = base_url.rstrip("/")
+    for suffix in ("/api", "/v1"):
+        if root.endswith(suffix):
+            root = root[: -len(suffix)].rstrip("/")
+            break
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    def _update(**fields):
+        with _ollama_pull_jobs_lock:
+            job = _ollama_pull_jobs.get(job_id)
+            if job is not None:
+                job.update(fields)
+
+    request = _urlreq.Request(
+        root + "/api/pull",
+        data=json.dumps({"model": model, "stream": True}).encode(),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        # No read timeout beyond connect: a pull legitimately runs for many
+        # minutes; progress lines keep the connection demonstrably alive.
+        with _urlreq.urlopen(request, timeout=30.0) as resp:
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except Exception:
+                    continue
+                if event.get("error"):
+                    _update(status="error", error_message=str(event["error"]))
+                    return
+                status = str(event.get("status", "") or "")
+                fields: dict = {"detail": status}
+                if isinstance(event.get("total"), (int, float)) and event["total"]:
+                    fields["total_bytes"] = int(event["total"])
+                    fields["completed_bytes"] = int(event.get("completed", 0) or 0)
+                _update(**fields)
+                if status == "success":
+                    _on_ollama_models_changed()
+                    _update(status="done", detail="success")
+                    return
+        # Stream ended without an explicit success line — treat as done only
+        # if the last event said so; otherwise report the ambiguity.
+        with _ollama_pull_jobs_lock:
+            job = _ollama_pull_jobs.get(job_id)
+            if job is not None and job.get("status") == "pulling":
+                job["status"] = "error"
+                job["error_message"] = "pull stream ended unexpectedly"
+    except Exception as exc:
+        _update(status="error", error_message=f"pull failed: {exc}")
+
+
+@app.post("/api/ollama/pull")
+async def start_ollama_pull(body: OllamaModelAction, request: Request):
+    """Start pulling a model from the Ollama registry. Token-protected.
+
+    Returns ``{job_id}``; poll ``GET /api/ollama/pull/{job_id}`` for progress.
+    """
+    _require_token(request)
+    model = (body.model or "").strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="model is required")
+
+    base_url, api_key = _ollama_connection(body.profile)
+
+    now = time.time()
+    job_id = secrets.token_hex(8)
+    with _ollama_pull_jobs_lock:
+        # Reuse an active job for the same model instead of double-pulling.
+        for jid, job in _ollama_pull_jobs.items():
+            if job.get("model") == model and job.get("status") == "pulling":
+                return {"job_id": jid}
+        # Expire finished records so the dict can't grow unboundedly.
+        for jid in [
+            j
+            for j, job in _ollama_pull_jobs.items()
+            if (now - job.get("at", 0)) > _OLLAMA_PULL_JOB_TTL
+        ]:
+            _ollama_pull_jobs.pop(jid, None)
+        _ollama_pull_jobs[job_id] = {
+            "model": model,
+            "status": "pulling",
+            "detail": "starting",
+            "at": now,
+        }
+
+    threading.Thread(
+        target=_run_ollama_pull_job,
+        args=(job_id, model, base_url, api_key),
+        daemon=True,
+        name=f"ollama-pull-{model}",
+    ).start()
+    return {"job_id": job_id}
+
+
+@app.get("/api/ollama/pull/{job_id}")
+async def poll_ollama_pull(job_id: str):
+    """Poll a pull job: ``{model, status, detail, total_bytes?, completed_bytes?}``.
+
+    ``status``: pulling | done | error.
+    """
+    with _ollama_pull_jobs_lock:
+        job = _ollama_pull_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="pull job not found or expired")
+    return {"job_id": job_id, **{k: v for k, v in job.items() if k != "at"}}
+
+
+@app.post("/api/ollama/delete")
+async def delete_ollama_model_endpoint(body: OllamaModelAction, request: Request):
+    """Delete an installed model. Token-protected."""
+    _require_token(request)
+    model = (body.model or "").strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="model is required")
+
+    from hermes_cli.models import delete_ollama_model
+
+    base_url, api_key = _ollama_connection(body.profile)
+    ok, message = await asyncio.to_thread(
+        delete_ollama_model, model, api_key, base_url
+    )
+    if ok:
+        _on_ollama_models_changed()
+    return {"ok": ok, "message": message}
+
+
+@app.post("/api/ollama/load")
+async def load_ollama_model_endpoint(body: OllamaModelAction, request: Request):
+    """Load a model into memory (optionally pinning keep_alive). Token-protected.
+
+    Used both for explicit warm-up from the management panel and to apply a
+    keep_alive change (Ollama applies keep_alive per-load).
+    """
+    _require_token(request)
+    model = (body.model or "").strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="model is required")
+
+    from hermes_cli.models import preload_ollama_model
+
+    base_url, api_key = _ollama_connection(body.profile)
+    ok, message = await asyncio.to_thread(
+        preload_ollama_model, model, body.keep_alive, api_key, base_url
+    )
+    return {"ok": ok, "message": message}
+
+
 @app.get("/api/model/auxiliary")
 def get_auxiliary_models(profile: Optional[str] = None):
     """Return current auxiliary task assignments.

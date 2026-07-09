@@ -1,10 +1,11 @@
 import { useStore } from '@nanostores/react'
+import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { Input } from '@/components/ui/input'
-import { getGlobalModelOptions } from '@/hermes'
+import { detectLocalServers, getGlobalModelOptions } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { Check, ChevronDown, ChevronLeft, KeyRound, Loader2 } from '@/lib/icons'
 import { isProviderSetupErrorMessage } from '@/lib/provider-setup-errors'
@@ -22,13 +23,14 @@ import {
   peekPendingProviderOAuth,
   refreshOnboarding,
   saveOnboardingApiKey,
+  saveOnboardingDetectedOllama,
   setOnboardingMode,
   startProviderOAuth
 } from '@/store/onboarding'
 import type { ModelOptionProvider, OAuthProvider } from '@/types/hermes'
 
 import { DocsLink, FlowPanel, Status } from './flow'
-import { FeaturedProviderRow, KeyProviderRow, ProviderRow, sortProviders } from './providers'
+import { DetectedLocalServerRow, FeaturedProviderRow, KeyProviderRow, ProviderRow, sortProviders } from './providers'
 
 export { FeaturedProviderRow, KeyProviderRow, ProviderRow, providerTitle, sortProviders } from './providers'
 
@@ -399,6 +401,22 @@ export function Picker({ ctx }: { ctx: OnboardingContext }) {
   const hasOauth = ordered.length > 0
   const apiKeyOptions = useApiKeyCatalog()
 
+  // Detected local model servers (Ollama). Non-blocking: the picker renders
+  // immediately and the detected row appears when the probe answers. Failures
+  // degrade to "no row" — the manual local-endpoint path still exists.
+  const localServers = useQuery({
+    queryKey: ['local-servers-detect'],
+    queryFn: () => detectLocalServers(),
+    staleTime: 60_000,
+    retry: false
+  })
+
+  const detectedOllama = useMemo(() => {
+    const servers = localServers.data?.servers ?? []
+
+    return servers.find(s => s.type === 'ollama' && s.reachable && s.models.length > 0) ?? null
+  }, [localServers.data])
+
   // localEndpoint forces the key form regardless of `mode` (which a manual
   // provider refresh may flip back to 'oauth'); it preselects the local option
   // and hides the "back to sign in" link since the user came specifically to
@@ -438,6 +456,12 @@ export function Picker({ ctx }: { ctx: OnboardingContext }) {
     <div className="grid gap-2">
       <div className="grid max-h-[60dvh] gap-2 overflow-y-auto p-1">
         {featured ? <FeaturedProviderRow onSelect={select} provider={featured} /> : null}
+        {detectedOllama ? (
+          <DetectedLocalServerRow
+            onConnect={(baseUrl, model) => saveOnboardingDetectedOllama(baseUrl, model, ctx)}
+            server={detectedOllama}
+          />
+        ) : null}
         {showRest ? (
           <>
             {rest.map(p => (

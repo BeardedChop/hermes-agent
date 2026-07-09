@@ -2034,6 +2034,8 @@ def resolve_runtime_provider(
             base_url = normalize_opencode_base_url(provider, api_mode, base_url)
         if provider == "lmstudio":
             base_url = auth_mod._normalize_lmstudio_runtime_base_url(base_url)
+        if provider == "ollama":
+            base_url = auth_mod._normalize_ollama_runtime_base_url(base_url)
         return {
             "provider": provider,
             "api_mode": api_mode,

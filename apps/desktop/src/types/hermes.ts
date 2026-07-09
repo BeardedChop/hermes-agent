@@ -278,6 +278,83 @@ export interface ModelOptionProvider {
 export interface ModelCapabilities {
   fast: boolean
   reasoning: boolean
+  /** True/false when a metadata source reported tool support; absent = unknown. */
+  tools?: boolean
+  vision?: boolean
+  /** Trained/served context window in tokens, when known. */
+  context_length?: number
+  /** Local Ollama models only, from the server's native metadata. */
+  parameter_size?: string
+  quantization?: string
+}
+
+/** One detected local model server from GET /api/local-servers/detect. */
+export interface LocalServerInfo {
+  /** Fingerprinted server type ("ollama", "lm-studio", ...) or the expected
+   *  type for an unreachable well-known port. */
+  type: string
+  /** OpenAI-compatible endpoint (server root + /v1). */
+  base_url: string
+  reachable: boolean
+  models: string[]
+  /** "well-known" (default port probe) or "configured" (model.base_url). */
+  source: string
+}
+
+export interface LocalServersResponse {
+  servers: LocalServerInfo[]
+}
+
+/** Installed model row from GET /api/ollama/models. */
+export interface OllamaInstalledModel {
+  name: string
+  size_bytes?: number
+  parameter_size?: string
+  quantization?: string
+  family?: string
+  modified_at?: string
+}
+
+/** Loaded model row from GET /api/ollama/models (native /api/ps). */
+export interface OllamaRunningModel {
+  name: string
+  size_bytes?: number
+  size_vram_bytes?: number
+  /** Window the model was actually loaded with. */
+  context_length?: number
+  expires_at?: string
+}
+
+export interface OllamaRecommendedModel {
+  model: string
+  description: string
+  approx_vram_gb?: number
+}
+
+/** Loaded-vs-trained context gap that q8_0 KV quantization would close. */
+export interface OllamaKvCacheAdvisory {
+  model: string
+  loaded_context: number
+  trained_context: number
+}
+
+export interface OllamaModelsResponse {
+  reachable: boolean
+  installed: OllamaInstalledModel[]
+  running: OllamaRunningModel[]
+  recommended: OllamaRecommendedModel[]
+  kv_cache_advisory?: null | OllamaKvCacheAdvisory
+}
+
+export interface OllamaPullStatus {
+  job_id: string
+  model: string
+  /** pulling | done | error */
+  status: string
+  detail?: string
+  error_message?: string
+  total_bytes?: number
+  completed_bytes?: number
 }
 
 export interface ModelOptionsResponse {

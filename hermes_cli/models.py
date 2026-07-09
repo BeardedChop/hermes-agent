@@ -1036,6 +1036,7 @@ CANONICAL_PROVIDERS: list[ProviderEntry] = [
     ProviderEntry("moa",            "Mixture of Agents",        "Mixture of Agents (named presets; aggregator acts after reference models)"),
     ProviderEntry("novita",         "NovitaAI",                 "NovitaAI (Cloud: Model API, Agent Sandbox, GPU Cloud)"),
     ProviderEntry("lmstudio",       "LM Studio",                "LM Studio (Local desktop app with built-in model server)"),
+    ProviderEntry("ollama",         "Ollama (local)",           "Ollama (Local model server on localhost:11434)"),
     ProviderEntry("anthropic",      "Anthropic",                "Anthropic (Claude models via API key or Claude Code)"),
     ProviderEntry("openai-codex",   "OpenAI Codex",             "OpenAI Codex (Codex CLI via ChatGPT subscription or API key)"),
     ProviderEntry("openai-api",     "OpenAI API",               "OpenAI API (api.openai.com, API key)"),
@@ -1273,7 +1274,7 @@ _PROVIDER_ALIASES = {
     "lmstudio": "lmstudio",
     "lm-studio": "lmstudio",
     "lm_studio": "lmstudio",
-    "ollama": "custom",  # bare "ollama" = local; use "ollama-cloud" for cloud
+    "ollama": "ollama",  # bare "ollama" = local server; use "ollama-cloud" for cloud
     "ollama_cloud": "ollama-cloud",
 }
 
@@ -2367,6 +2368,17 @@ def provider_model_ids(provider: Optional[str], *, force_refresh: bool = False) 
         live = fetch_ollama_cloud_models(force_refresh=force_refresh)
         if live:
             return live
+    if normalized == "ollama":
+        # Local Ollama server: list installed models from the native API.
+        # Base URL precedence: active config's base_url (when the current
+        # provider is ollama) > localhost default.
+        model_cfg = _get_model_config_dict()
+        cfg_provider = normalize_provider(str(model_cfg.get("provider", "") or ""))
+        cfg_base_url = str(model_cfg.get("base_url", "") or "").strip() if cfg_provider == "ollama" else ""
+        cfg_api_key = str(model_cfg.get("api_key", "") or "").strip() if cfg_provider == "ollama" else ""
+        return fetch_ollama_local_models(
+            api_key=cfg_api_key, base_url=cfg_base_url or None, timeout=3.0
+        )
     if normalized in ("openai", "openai-api"):
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
         if api_key:
@@ -2636,6 +2648,13 @@ def cached_provider_model_ids(
     normalized = normalize_provider(provider) or (provider or "")
     if not normalized:
         return []
+
+    # Local Ollama: never disk-cache. The installed-model list changes with
+    # every pull/delete/server restart, the live /api/tags fetch costs
+    # milliseconds (fast TCP pre-check when down), and a stale cached list
+    # surfaces models that no longer exist in the picker.
+    if normalized == "ollama":
+        return provider_model_ids(normalized, force_refresh=force_refresh)
 
     cache = _load_provider_models_cache()
     fp = _credential_fingerprint(normalized)
@@ -3155,6 +3174,388 @@ def _fetch_github_models(api_key: Optional[str] = None, timeout: float = 5.0) ->
     if not catalog:
         return None
     return [item.get("id", "") for item in catalog if item.get("id")]
+
+
+# ── Local Ollama server (native /api metadata) ──────────────────────────────
+#
+# The OpenAI-compatible /v1/models endpoint returns bare model ids. Ollama's
+# native API is much richer: /api/tags lists installed models with size and
+# family, /api/show returns capabilities (tools/vision/thinking), parameter
+# size, quantization, and context length. The picker uses this to badge
+# models honestly (an agent needs tool support) — inference stays on /v1.
+
+def _ollama_server_root(base_url: Optional[str]) -> Optional[str]:
+    """Server root for Ollama's native API (strip a trailing /v1 or /api).
+
+    ``localhost`` is rewritten to ``127.0.0.1``: Ollama binds IPv4 loopback
+    by default, and on Windows ``localhost`` resolves to ``::1`` first, so
+    every request pays a ~2s failed IPv6 connect before falling back.
+    """
+    root = str(base_url or "").strip().rstrip("/")
+    if not root:
+        return None
+    for suffix in ("/api", "/v1"):
+        if root.endswith(suffix):
+            root = root[: -len(suffix)].rstrip("/")
+            break
+    if "://" not in root:
+        root = "http://" + root
+    return root.replace("://localhost", "://127.0.0.1")
+
+
+# One failed reachability probe covers every fetcher call for a while, so an
+# offline server costs the model picker a single sub-second check instead of
+# an HTTP timeout per call (multiplied per model by capability enrichment).
+_OLLAMA_UNREACHABLE_CACHE: dict = {}
+_OLLAMA_UNREACHABLE_TTL = 30.0
+
+
+def _ollama_server_reachable(
+    server_root: str, timeout: float = 0.3, use_cache: bool = True
+) -> bool:
+    """Fast TCP pre-check before any native-API read.
+
+    The picker and settings pages call the fetchers below on every open, so
+    an unreachable server must fail in milliseconds — a raw connect either
+    succeeds or is refused near-instantly on localhost, and the short timeout
+    caps the silently-dropped case. Failures are cached briefly so bulk
+    payload builds don't repeat the probe per model.
+
+    ``use_cache=False`` forces a fresh probe — for status endpoints that must
+    notice a server coming up immediately (a cached failure would report a
+    just-started server as down for the rest of the TTL). A successful fresh
+    probe clears the negative entry for every cached caller too.
+    """
+    import socket
+    import time as _time
+    from urllib.parse import urlparse
+
+    now = _time.monotonic()
+    if use_cache:
+        failed_at = _OLLAMA_UNREACHABLE_CACHE.get(server_root)
+        if failed_at is not None and (now - failed_at) < _OLLAMA_UNREACHABLE_TTL:
+            return False
+
+    try:
+        parsed = urlparse(server_root)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        with socket.create_connection((host, port), timeout=timeout):
+            pass
+        _OLLAMA_UNREACHABLE_CACHE.pop(server_root, None)
+        return True
+    except Exception:
+        _OLLAMA_UNREACHABLE_CACHE[server_root] = now
+        return False
+
+
+def _ollama_request_headers(api_key: Optional[str] = None) -> dict:
+    headers = {"Content-Type": "application/json"}
+    key = str(api_key or "").strip()
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    return headers
+
+
+def fetch_ollama_local_models(
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    timeout: float = 5.0,
+) -> list[str]:
+    """List installed models from a local Ollama server's native ``/api/tags``.
+
+    Returns model names (``model:tag``) or an empty list when the server is
+    unreachable or the response is malformed.
+    """
+    server_root = _ollama_server_root(base_url or "http://localhost:11434")
+    if not server_root:
+        return []
+    if not _ollama_server_reachable(server_root):
+        return []
+
+    request = urllib.request.Request(
+        server_root + "/api/tags", headers=_ollama_request_headers(api_key)
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode())
+    except Exception:
+        return []
+
+    models = payload.get("models")
+    if not isinstance(models, list):
+        return []
+
+    names: list[str] = []
+    for raw in models:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or raw.get("model") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def fetch_ollama_model_metadata(
+    model: str,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: float = 5.0,
+) -> Optional[dict]:
+    """Fetch one model's metadata from a local Ollama server's ``/api/show``.
+
+    Returns a dict with (all fields best-effort, absent keys omitted):
+      - ``capabilities``: list[str] — e.g. ["completion", "tools", "vision", "thinking"]
+      - ``parameter_size``: str — e.g. "27B"
+      - ``quantization``: str — e.g. "Q4_K_M"
+      - ``context_length``: int — trained context from GGUF metadata
+      - ``family``: str — model family, e.g. "qwen3"
+
+    Returns None when the server is unreachable or the model is unknown.
+    """
+    server_root = _ollama_server_root(base_url or "http://localhost:11434")
+    if not server_root or not str(model or "").strip():
+        return None
+    if not _ollama_server_reachable(server_root):
+        return None
+
+    body = json.dumps({"name": str(model).strip()}).encode()
+    request = urllib.request.Request(
+        server_root + "/api/show",
+        data=body,
+        headers=_ollama_request_headers(api_key),
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode())
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    meta: dict = {}
+
+    caps = payload.get("capabilities")
+    if isinstance(caps, list):
+        meta["capabilities"] = [str(c).strip().lower() for c in caps if isinstance(c, str)]
+
+    details = payload.get("details")
+    if isinstance(details, dict):
+        if details.get("parameter_size"):
+            meta["parameter_size"] = str(details["parameter_size"]).strip()
+        if details.get("quantization_level"):
+            meta["quantization"] = str(details["quantization_level"]).strip()
+        if details.get("family"):
+            meta["family"] = str(details["family"]).strip()
+
+    # Context length lives in model_info under "<architecture>.context_length".
+    model_info = payload.get("model_info")
+    if isinstance(model_info, dict):
+        for key, value in model_info.items():
+            if str(key).endswith(".context_length") and isinstance(value, (int, float)):
+                meta["context_length"] = int(value)
+                break
+
+    return meta or None
+
+
+# Curated models that work well as Hermes agent backends on a local Ollama
+# server. Every entry supports tool calling. ``approx_vram_gb`` is the rough
+# working-set need at the default quantization — used to annotate the
+# recommendation (never to gate it: Ollama falls back to partial offload).
+OLLAMA_RECOMMENDED_MODELS: list[dict] = [
+    {"model": "qwen3:8b", "description": "Qwen3 8B — tools + thinking, good starter", "approx_vram_gb": 8},
+    {"model": "gpt-oss:20b", "description": "OpenAI open-weight 20B — tools + thinking", "approx_vram_gb": 16},
+    {"model": "qwen3:32b", "description": "Qwen3 32B — strong agent at 24GB", "approx_vram_gb": 24},
+    {"model": "mistral-small3.2:24b", "description": "Mistral Small 3.2 — tools + vision", "approx_vram_gb": 20},
+    {"model": "llama3.3:70b", "description": "Llama 3.3 70B — tools, needs 48GB+", "approx_vram_gb": 48},
+    {"model": "gpt-oss:120b", "description": "OpenAI open-weight 120B — tools + thinking, needs 80GB", "approx_vram_gb": 80},
+]
+
+
+def fetch_ollama_installed_model_details(
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    timeout: float = 5.0,
+) -> list[dict]:
+    """Installed models with size/details from native ``/api/tags``.
+
+    Returns ``[{name, size_bytes, parameter_size, quantization, family,
+    modified_at}]`` (absent fields omitted), or ``[]`` when unreachable.
+    """
+    server_root = _ollama_server_root(base_url or "http://localhost:11434")
+    if not server_root:
+        return []
+    if not _ollama_server_reachable(server_root):
+        return []
+
+    request = urllib.request.Request(
+        server_root + "/api/tags", headers=_ollama_request_headers(api_key)
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode())
+    except Exception:
+        return []
+
+    models = payload.get("models")
+    if not isinstance(models, list):
+        return []
+
+    out: list[dict] = []
+    for raw in models:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or raw.get("model") or "").strip()
+        if not name:
+            continue
+        entry: dict = {"name": name}
+        if isinstance(raw.get("size"), (int, float)):
+            entry["size_bytes"] = int(raw["size"])
+        if raw.get("modified_at"):
+            entry["modified_at"] = str(raw["modified_at"])
+        details = raw.get("details")
+        if isinstance(details, dict):
+            if details.get("parameter_size"):
+                entry["parameter_size"] = str(details["parameter_size"]).strip()
+            if details.get("quantization_level"):
+                entry["quantization"] = str(details["quantization_level"]).strip()
+            if details.get("family"):
+                entry["family"] = str(details["family"]).strip()
+        out.append(entry)
+    return out
+
+
+def fetch_ollama_running_models(
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    timeout: float = 5.0,
+) -> list[dict]:
+    """Loaded models from native ``/api/ps``.
+
+    Returns ``[{name, size_bytes, size_vram_bytes, context_length,
+    expires_at}]`` (absent fields omitted), or ``[]`` when unreachable or
+    nothing is loaded. ``context_length`` is the window the model was
+    actually loaded with — the input for the KV-cache advisory.
+    """
+    server_root = _ollama_server_root(base_url or "http://localhost:11434")
+    if not server_root:
+        return []
+    if not _ollama_server_reachable(server_root):
+        return []
+
+    request = urllib.request.Request(
+        server_root + "/api/ps", headers=_ollama_request_headers(api_key)
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode())
+    except Exception:
+        return []
+
+    models = payload.get("models")
+    if not isinstance(models, list):
+        return []
+
+    out: list[dict] = []
+    for raw in models:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or raw.get("model") or "").strip()
+        if not name:
+            continue
+        entry: dict = {"name": name}
+        if isinstance(raw.get("size"), (int, float)):
+            entry["size_bytes"] = int(raw["size"])
+        if isinstance(raw.get("size_vram"), (int, float)):
+            entry["size_vram_bytes"] = int(raw["size_vram"])
+        if isinstance(raw.get("context_length"), (int, float)):
+            entry["context_length"] = int(raw["context_length"])
+        if raw.get("expires_at"):
+            entry["expires_at"] = str(raw["expires_at"])
+        out.append(entry)
+    return out
+
+
+def delete_ollama_model(
+    model: str,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    timeout: float = 15.0,
+) -> tuple[bool, str]:
+    """Delete an installed model via native ``DELETE /api/delete``.
+
+    Returns ``(ok, message)`` — message is empty on success.
+    """
+    server_root = _ollama_server_root(base_url or "http://localhost:11434")
+    name = str(model or "").strip()
+    if not server_root or not name:
+        return False, "missing model or server"
+
+    body = json.dumps({"model": name}).encode()
+    request = urllib.request.Request(
+        server_root + "/api/delete",
+        data=body,
+        headers=_ollama_request_headers(api_key),
+        method="DELETE",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            resp.read()
+        return True, ""
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return False, f"model {name!r} not found"
+        return False, f"delete failed with HTTP {exc.code}"
+    except Exception:
+        return False, "could not reach the Ollama server"
+
+
+def preload_ollama_model(
+    model: str,
+    keep_alive: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    timeout: float = 300.0,
+) -> tuple[bool, str]:
+    """Load a model into memory via a prompt-less native ``/api/generate``.
+
+    Ollama loads the model and returns without generating. ``keep_alive``
+    (e.g. ``"5m"``, ``"2h"``, ``"-1"`` for indefinite) pins how long it stays
+    resident; Ollama applies keep_alive per-load, so re-issue this call to
+    change it. The generous timeout covers cold weight loads on big models.
+
+    Returns ``(ok, message)`` — message is empty on success.
+    """
+    server_root = _ollama_server_root(base_url or "http://localhost:11434")
+    name = str(model or "").strip()
+    if not server_root or not name:
+        return False, "missing model or server"
+
+    req_body: dict = {"model": name}
+    ka = str(keep_alive or "").strip()
+    if ka:
+        # Ollama accepts a Go duration string or a number of seconds;
+        # "-1" means keep loaded indefinitely.
+        req_body["keep_alive"] = int(ka) if ka.lstrip("-").isdigit() else ka
+
+    request = urllib.request.Request(
+        server_root + "/api/generate",
+        data=json.dumps(req_body).encode(),
+        headers=_ollama_request_headers(api_key),
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            resp.read()
+        return True, ""
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return False, f"model {name!r} not found — pull it first"
+        return False, f"load failed with HTTP {exc.code}"
+    except Exception:
+        return False, "could not reach the Ollama server"
 
 
 _COPILOT_MODEL_ALIASES = {

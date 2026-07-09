@@ -680,6 +680,24 @@ export const en: Translations = {
         curator: { label: 'Curator', hint: 'Skill-usage review' }
       }
     },
+    ollama: {
+      categoryTitle: 'Local servers',
+      running: (n: number) => (n === 1 ? 'Running · 1 model' : `Running · ${n} models`),
+      notRunning: 'Not running — start Ollama (localhost:11434) to manage and use local models.',
+      desc: 'Pull, delete, and warm up models on the local Ollama server.',
+      loaded: 'Loaded',
+      load: 'Load',
+      loadFailed: 'Could not load the model',
+      deleteLabel: (model: string) => `Delete ${model}`,
+      deleteFailed: 'Could not delete the model',
+      getModels: 'Get models',
+      pull: 'Pull',
+      pullPlaceholder: 'model:tag (e.g. qwen3:8b)',
+      pullDone: (model: string) => `${model} is ready`,
+      pullFailed: 'Model pull failed',
+      kvCacheAdvisory: (model: string, loaded: string, trained: string) =>
+        `${model} is running a ${loaded} context but supports ${trained}. Setting OLLAMA_KV_CACHE_TYPE=q8_0 on the Ollama server roughly doubles the context that fits in the same memory.`
+    },
     providers: {
       connectAccount: 'Connect an account',
       haveApiKey: 'Have an API key instead?',
@@ -1737,6 +1755,7 @@ export const en: Translations = {
     stop: 'Stop',
     dismiss: 'Dismiss',
     exit: code => `exit ${code}`,
+    ollamaLoading: (model: string) => `Loading ${model} into memory…`,
     coding: {
       title: 'Working tree',
       noBranch: 'No branch',
@@ -1896,6 +1915,12 @@ export const en: Translations = {
     connected: 'Connected',
     featuredPitch: 'One subscription, 300+ frontier models — the recommended way to run Hermes',
     openRouterPitch: 'One key, hundreds of models — a solid default',
+    detectedLocal: {
+      detected: 'Detected',
+      modelsInstalled: (n: number) => (n === 1 ? '1 model installed — runs on this machine' : `${n} models installed — runs on this machine`),
+      use: 'Use',
+      connectFailed: 'Could not connect to the local server.'
+    },
     apiKeyOptions: {
       openrouter: {
         short: 'one key, many models',
@@ -1965,6 +1990,8 @@ export const en: Translations = {
     noAuthenticatedProviders: 'No authenticated providers.',
     pro: 'Pro',
     proNeedsSubscription: 'Pro models need a paid Nous subscription.',
+    noTools: 'No tools',
+    noToolsTitle: 'This model does not support tool calling — most agent features will not work with it.',
     free: 'Free',
     freeTier: 'Free tier',
     priceTitle: 'Input / Output price per million tokens'

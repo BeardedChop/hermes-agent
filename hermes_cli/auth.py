@@ -151,6 +151,10 @@ SERVICE_PROVIDER_NAMES: Dict[str, str] = {
 # any remote service.
 LMSTUDIO_NOAUTH_PLACEHOLDER = "dummy-lm-api-key"
 
+# Same role for local Ollama servers, which are unauthenticated by default.
+# Sent only to the local server, never to any remote service.
+OLLAMA_NOAUTH_PLACEHOLDER = "dummy-ollama-api-key"
+
 
 # =============================================================================
 # Provider Registry
@@ -216,6 +220,16 @@ PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
         inference_base_url="http://127.0.0.1:1234/v1",
         api_key_env_vars=("LM_API_KEY",),
         base_url_env_var="LM_BASE_URL",
+    ),
+    "ollama": ProviderConfig(
+        id="ollama",
+        name="Ollama (local)",
+        auth_type="api_key",
+        # 127.0.0.1, not localhost — see _normalize_ollama_runtime_base_url.
+        inference_base_url="http://127.0.0.1:11434/v1",
+        # No key env vars: local Ollama servers are unauthenticated by default.
+        # A key for a reverse-proxied server can be set via model.api_key.
+        api_key_env_vars=(),
     ),
     "copilot": ProviderConfig(
         id="copilot",
@@ -745,6 +759,26 @@ def _normalize_lmstudio_runtime_base_url(base_url: str) -> str:
             root = root[: -len(suffix)].rstrip("/")
             break
     return (root or "http://127.0.0.1:1234") + "/v1"
+
+
+def _normalize_ollama_runtime_base_url(base_url: str) -> str:
+    """Return the OpenAI-compatible local Ollama runtime base URL.
+
+    Ollama's native management API lives under ``/api`` while its
+    OpenAI-compatible chat endpoint lives under ``/v1``. Users paste either
+    form (or the bare server root) into ``model.base_url``; normalize before
+    the OpenAI SDK appends ``/chat/completions``.
+    """
+    root = str(base_url or "").strip().rstrip("/")
+    for suffix in ("/api", "/v1"):
+        if root.endswith(suffix):
+            root = root[: -len(suffix)].rstrip("/")
+            break
+    # IPv4 loopback, not localhost: Ollama binds 127.0.0.1 by default and
+    # Windows resolves localhost to ::1 first — a ~2s failed IPv6 connect on
+    # every chat request otherwise.
+    root = root.replace("://localhost", "://127.0.0.1")
+    return (root or "http://127.0.0.1:11434") + "/v1"
 
 
 # =============================================================================
@@ -1675,7 +1709,7 @@ def resolve_provider(
         "kilo": "kilocode", "kilo-code": "kilocode", "kilo-gateway": "kilocode",
         "lmstudio": "lmstudio", "lm-studio": "lmstudio", "lm_studio": "lmstudio",
         # Local server aliases — route through the generic custom provider
-        "ollama": "custom", "ollama_cloud": "ollama-cloud",
+        "ollama": "ollama", "ollama_cloud": "ollama-cloud",
         "vllm": "custom", "llamacpp": "custom",
         "llama.cpp": "custom", "llama-cpp": "custom",
     }
@@ -6386,6 +6420,11 @@ def resolve_api_key_provider_credentials(provider_id: str) -> Dict[str, Any]:
         api_key = LMSTUDIO_NOAUTH_PLACEHOLDER
         key_source = key_source or "default"
 
+    # Same for local Ollama servers (unauthenticated by default).
+    if not api_key and provider_id == "ollama":
+        api_key = OLLAMA_NOAUTH_PLACEHOLDER
+        key_source = key_source or "default"
+
     env_url = ""
     if pconfig.base_url_env_var:
         env_url = os.getenv(pconfig.base_url_env_var, "").strip()
@@ -6421,6 +6460,9 @@ def resolve_api_key_provider_credentials(provider_id: str) -> Dict[str, Any]:
 
     if provider_id == "lmstudio":
         base_url = _normalize_lmstudio_runtime_base_url(base_url)
+
+    if provider_id == "ollama":
+        base_url = _normalize_ollama_runtime_base_url(base_url)
 
     # Last-resort guard: an API-key provider must never hand back an empty
     # base URL (a set-but-empty COPILOT_API_BASE_URL or similar env override

@@ -26,6 +26,7 @@ import type { EnvVarInfo, OAuthProvider } from '@/types/hermes'
 import { isKeyVar, ProviderKeyRows } from './credential-key-ui'
 import { SettingsCategoryHeading, useEnvCredentials } from './env-credentials'
 import { providerGroup, providerMeta, providerPriority } from './helpers'
+import { OllamaProviderCard } from './ollama-panel'
 import { LoadingState, SettingsContent } from './primitives'
 
 // The embedded terminal (and thus the "run disconnect command" path) only
@@ -457,6 +458,10 @@ export function ProvidersSettings({ onClose, onViewChange, view }: ProvidersSett
         onWantApiKey={() => onViewChange('keys')}
         providers={oauthProviders}
       />
+      {/* Local Ollama server — a provider whose connection kind is
+          reachability rather than a credential, so it renders its own card
+          instead of an OAuth or API-key row. */}
+      <OllamaProviderCard />
     </SettingsContent>
   )
 }

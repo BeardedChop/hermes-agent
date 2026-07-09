@@ -868,6 +868,24 @@ export const zh: Translations = {
         curator: { label: '维护器', hint: '技能使用审查' }
       }
     },
+    ollama: {
+      categoryTitle: '本地服务器',
+      running: (n: number) => `运行中 · ${n} 个模型`,
+      notRunning: '未运行 — 启动 Ollama（localhost:11434）以管理和使用本地模型。',
+      desc: '在本地 Ollama 服务器上拉取、删除和预热模型。',
+      loaded: '已加载',
+      load: '加载',
+      loadFailed: '无法加载模型',
+      deleteLabel: (model: string) => `删除 ${model}`,
+      deleteFailed: '无法删除模型',
+      getModels: '获取模型',
+      pull: '拉取',
+      pullPlaceholder: 'model:tag（例如 qwen3:8b）',
+      pullDone: (model: string) => `${model} 已就绪`,
+      pullFailed: '模型拉取失败',
+      kvCacheAdvisory: (model: string, loaded: string, trained: string) =>
+        `${model} 当前以 ${loaded} 上下文运行，但支持 ${trained}。在 Ollama 服务器上设置 OLLAMA_KV_CACHE_TYPE=q8_0 可在相同内存下大约翻倍可用上下文。`
+    },
     providers: {
       connectAccount: '连接账号',
       haveApiKey: '改用 API 密钥？',
@@ -1912,6 +1930,7 @@ export const zh: Translations = {
     stop: '停止',
     dismiss: '关闭',
     exit: code => `退出码 ${code}`,
+    ollamaLoading: (model: string) => `正在将 ${model} 加载到内存…`,
     coding: {
       title: '工作区',
       noBranch: '无分支',
@@ -2068,6 +2087,12 @@ export const zh: Translations = {
     connected: '已连接',
     featuredPitch: '一个订阅，300+ 前沿模型 — 运行 Hermes 的推荐方式',
     openRouterPitch: '一个密钥，数百个模型 — 稳妥的默认选择',
+    detectedLocal: {
+      detected: '已检测到',
+      modelsInstalled: (n: number) => `已安装 ${n} 个模型 — 在本机运行`,
+      use: '使用',
+      connectFailed: '无法连接到本地服务器。'
+    },
     apiKeyOptions: {
       openrouter: { short: '一个密钥，多个模型', description: '用一个密钥访问数百个模型。适合新安装的默认选择。' },
       openai: { short: 'GPT 级模型', description: '直接访问 OpenAI 模型。' },
@@ -2132,6 +2157,8 @@ export const zh: Translations = {
     noAuthenticatedProviders: '没有已认证的提供方。',
     pro: 'Pro',
     proNeedsSubscription: 'Pro 模型需要付费 Nous 订阅。',
+    noTools: '不支持工具',
+    noToolsTitle: '该模型不支持工具调用 — 大多数智能体功能将无法使用。',
     free: '免费',
     freeTier: '免费层',
     priceTitle: '每百万 token 的输入/输出价格'

@@ -1435,6 +1435,51 @@ def query_ollama_supports_vision(model: str, base_url: str, api_key: str = "") -
     return None
 
 
+def query_ollama_supports_thinking(model: str, base_url: str, api_key: str = "") -> Optional[bool]:
+    """Return True/False when Ollama ``/api/show`` reports thinking support.
+
+    Uses the ``capabilities`` field (Ollama 0.6.0+). Returns None when the
+    server is unreachable, not Ollama, the model is unknown, or the server
+    predates the capabilities field — callers should treat None as "unknown"
+    and not gate on it.
+    """
+    import httpx
+
+    bare_model = _strip_provider_prefix(model)
+    if not bare_model or not base_url:
+        return None
+
+    try:
+        if detect_local_server_type(base_url, api_key=api_key) != "ollama":
+            return None
+    except Exception:
+        return None
+
+    server_url = base_url.rstrip("/")
+    if server_url.endswith("/v1"):
+        server_url = server_url[:-3]
+
+    headers = _auth_headers(api_key)
+
+    try:
+        with httpx.Client(timeout=3.0, headers=headers) as client:
+            resp = client.post(f"{server_url}/api/show", json={"name": bare_model})
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+    except Exception:
+        return None
+
+    caps = data.get("capabilities")
+    if isinstance(caps, list):
+        if any(str(cap).lower() == "thinking" for cap in caps):
+            return True
+        if caps:
+            return False
+
+    return None
+
+
 def _query_ollama_api_show(model: str, base_url: str, api_key: str = "") -> Optional[int]:
     """Query an Ollama server's native ``/api/show`` for context length.
 

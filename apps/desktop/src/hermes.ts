@@ -19,6 +19,7 @@ import type {
   EnvVarInfo,
   HermesConfig,
   HermesConfigRecord,
+  LocalServersResponse,
   LogsResponse,
   McpCatalogResponse,
   McpServerSummary,
@@ -37,6 +38,8 @@ import type {
   OAuthProvidersResponse,
   OAuthStartResponse,
   OAuthSubmitResponse,
+  OllamaModelsResponse,
+  OllamaPullStatus,
   PaginatedSessions,
   ProfileCreatePayload,
   ProfileSetupCommand,
@@ -900,6 +903,62 @@ export interface RecommendedDefaultModel {
   model: string
   /** True/false for Nous (free vs paid tier); null for other providers. */
   free_tier: boolean | null
+}
+
+// Detect running local model servers (Ollama, LM Studio) by probing their
+// well-known ports plus the configured base_url. Results are cached
+// server-side for 60s; refresh=true busts the cache.
+export function detectLocalServers(opts?: { refresh?: boolean }): Promise<LocalServersResponse> {
+  return window.hermesDesktop.api<LocalServersResponse>({
+    ...profileScoped(),
+    path: opts?.refresh ? '/api/local-servers/detect?refresh=1' : '/api/local-servers/detect'
+  })
+}
+
+// Installed + running + recommended models for the local Ollama server.
+export function getOllamaModels(): Promise<OllamaModelsResponse> {
+  return window.hermesDesktop.api<OllamaModelsResponse>({
+    ...profileScoped(),
+    path: '/api/ollama/models'
+  })
+}
+
+// Start pulling a model from the Ollama registry; poll with pollOllamaPull.
+export function startOllamaPull(model: string): Promise<{ job_id: string }> {
+  return window.hermesDesktop.api<{ job_id: string }>({
+    ...profileScoped(),
+    path: '/api/ollama/pull',
+    method: 'POST',
+    body: { model }
+  })
+}
+
+export function pollOllamaPull(jobId: string): Promise<OllamaPullStatus> {
+  return window.hermesDesktop.api<OllamaPullStatus>({
+    ...profileScoped(),
+    path: `/api/ollama/pull/${encodeURIComponent(jobId)}`
+  })
+}
+
+export function deleteOllamaModel(model: string): Promise<{ ok: boolean; message: string }> {
+  return window.hermesDesktop.api<{ ok: boolean; message: string }>({
+    ...profileScoped(),
+    path: '/api/ollama/delete',
+    method: 'POST',
+    body: { model }
+  })
+}
+
+// Load a model into memory. keep_alive pins residence ("5m", "2h", "-1" =
+// indefinite); Ollama applies keep_alive per-load, so this doubles as the
+// way to change it for an already-loaded model.
+export function loadOllamaModel(model: string, keepAlive?: string): Promise<{ ok: boolean; message: string }> {
+  return window.hermesDesktop.api<{ ok: boolean; message: string }>({
+    ...profileScoped(),
+    path: '/api/ollama/load',
+    method: 'POST',
+    body: { model, keep_alive: keepAlive ?? null }
+  })
 }
 
 // Recommended default model for a freshly-authenticated provider. Mirrors the
