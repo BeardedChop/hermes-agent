@@ -9,6 +9,7 @@ Covers:
 """
 
 import asyncio
+import json
 import threading
 from unittest.mock import MagicMock, patch
 
@@ -82,6 +83,15 @@ def _make_slow_agent(**kwargs):
     mock_agent.session_total_tokens = 0
 
     return mock_agent, ready, interrupted
+
+
+def _sse_events(body: str):
+    """Decode JSON data frames from an SSE response body."""
+    return [
+        json.loads(line.removeprefix("data: "))
+        for line in body.splitlines()
+        if line.startswith("data: ")
+    ]
 
 
 @pytest.fixture
@@ -305,7 +315,123 @@ class TestRunEvents:
                 assert "run.completed" in body
                 assert "Hello!" in body
 
+    @pytest.mark.asyncio
+    async def test_reconnect_replays_events_after_last_event_id(self, adapter):
+        app = _create_runs_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_create_agent") as mock_create:
+                mock_agent = MagicMock()
 
+                def _run(**kwargs):
+                    create_kwargs = mock_create.call_args.kwargs
+                    create_kwargs["stream_delta_callback"]("one")
+                    create_kwargs["stream_delta_callback"]("two")
+                    return {"final_response": "done"}
+
+                mock_agent.run_conversation.side_effect = _run
+                mock_agent.session_prompt_tokens = 0
+                mock_agent.session_completion_tokens = 0
+                mock_agent.session_total_tokens = 0
+                mock_create.return_value = mock_agent
+
+                start = await cli.post("/v1/runs", json={"input": "hello"})
+                run_id = (await start.json())["run_id"]
+                first = await cli.get(f"/v1/runs/{run_id}/events")
+                first_events = _sse_events(await first.text())
+
+                assert [event["seq"] for event in first_events] == [1, 2, 3]
+                resumed = await cli.get(
+                    f"/v1/runs/{run_id}/events",
+                    headers={"Last-Event-ID": "1"},
+                )
+                resumed_events = _sse_events(await resumed.text())
+
+                assert [event["seq"] for event in resumed_events] == [2, 3]
+                assert [event["event"] for event in resumed_events] == [
+                    "message.delta",
+                    "run.completed",
+                ]
+
+    @pytest.mark.asyncio
+    async def test_replay_overflow_emits_truncation_snapshot_and_retained_tail(self, adapter):
+        adapter._RUN_EVENT_REPLAY_SIZE = 2
+        app = _create_runs_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_create_agent") as mock_create:
+                mock_agent = MagicMock()
+
+                def _run(**kwargs):
+                    delta_cb = mock_create.call_args.kwargs["stream_delta_callback"]
+                    delta_cb("one")
+                    delta_cb("two")
+                    delta_cb("three")
+                    return {"final_response": "done"}
+
+                mock_agent.run_conversation.side_effect = _run
+                mock_agent.session_prompt_tokens = 0
+                mock_agent.session_completion_tokens = 0
+                mock_agent.session_total_tokens = 0
+                mock_create.return_value = mock_agent
+
+                start = await cli.post("/v1/runs", json={"input": "hello"})
+                run_id = (await start.json())["run_id"]
+                for _ in range(20):
+                    if adapter._run_statuses[run_id]["status"] == "completed":
+                        break
+                    await asyncio.sleep(0.05)
+
+                response = await cli.get(f"/v1/runs/{run_id}/events?after=0")
+                events = _sse_events(await response.text())
+
+                assert events[0]["event"] == "replay_truncated"
+                assert events[0]["requested_seq"] == 0
+                assert events[0]["oldest_available_seq"] == 3
+                assert events[0]["latest_seq"] == 4
+                assert events[0]["run"] == adapter._run_statuses[run_id]
+                assert [event["seq"] for event in events[1:]] == [3, 4]
+
+    def test_slow_subscriber_is_bounded_and_told_to_resync(self, adapter):
+        run_id = "run_slow"
+        adapter._run_statuses[run_id] = {"run_id": run_id, "status": "running"}
+        stream = adapter._run_streams[run_id] = adapter._new_run_event_stream()
+        stream.subscriber_size = 2
+        listener = stream.subscribe(0, adapter._run_statuses[run_id])
+
+        adapter._publish_run_event(run_id, {"event": "message.delta", "delta": "one"})
+        adapter._publish_run_event(run_id, {"event": "message.delta", "delta": "two"})
+        adapter._publish_run_event(run_id, {"event": "message.delta", "delta": "three"})
+
+        assert listener.qsize() == 2
+        control = listener.get_nowait()
+        assert control["event"] == "replay_truncated"
+        assert control["reason"] == "slow_consumer"
+        assert listener.get_nowait() is None
+        assert listener not in stream.listeners
+
+    @pytest.mark.asyncio
+    async def test_completed_run_replay_is_available_to_multiple_subscribers(self, adapter):
+        app = _create_runs_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_create_agent") as mock_create:
+                mock_agent = MagicMock()
+                mock_agent.run_conversation.return_value = {"final_response": "done"}
+                mock_agent.session_prompt_tokens = 0
+                mock_agent.session_completion_tokens = 0
+                mock_agent.session_total_tokens = 0
+                mock_create.return_value = mock_agent
+
+                start = await cli.post("/v1/runs", json={"input": "hello"})
+                run_id = (await start.json())["run_id"]
+                first, second = await asyncio.gather(
+                    cli.get(f"/v1/runs/{run_id}/events"),
+                    cli.get(f"/v1/runs/{run_id}/events"),
+                )
+                first_events, second_events = await asyncio.gather(
+                    first.text(), second.text(),
+                )
+
+                assert _sse_events(first_events) == _sse_events(second_events)
+                assert _sse_events(first_events)[-1]["event"] == "run.completed"
 
     @pytest.mark.asyncio
     async def test_approval_response_without_pending_returns_409(self, adapter):

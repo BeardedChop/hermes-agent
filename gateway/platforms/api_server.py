@@ -32,6 +32,7 @@ Requires:
 """
 
 import asyncio
+from collections import deque
 import hashlib
 import hmac
 import json
@@ -63,6 +64,81 @@ from gateway.platforms.base import (
 from agent.redact import redact_sensitive_text
 
 logger = logging.getLogger(__name__)
+
+
+class _RunEventStream:
+    """Bounded per-run replay log with independent, bounded subscribers."""
+
+    def __init__(self, replay_size: int, subscriber_size: int) -> None:
+        self.events = deque(maxlen=replay_size)
+        self.listeners: set[asyncio.Queue] = set()
+        self.next_seq = 1
+        self.closed = False
+        self.subscriber_size = subscriber_size
+
+    def publish(self, event: Dict[str, Any], run_snapshot: Dict[str, Any]) -> None:
+        if self.closed:
+            return
+        sequenced = dict(event)
+        sequenced["seq"] = self.next_seq
+        self.next_seq += 1
+        self.events.append(sequenced)
+        for listener in tuple(self.listeners):
+            try:
+                listener.put_nowait(sequenced)
+            except asyncio.QueueFull:
+                self.listeners.discard(listener)
+                while not listener.empty():
+                    listener.get_nowait()
+                listener.put_nowait({
+                    "event": "replay_truncated",
+                    "reason": "slow_consumer",
+                    "requested_seq": sequenced["seq"],
+                    "oldest_available_seq": self.events[0]["seq"],
+                    "latest_seq": sequenced["seq"],
+                    "run": dict(run_snapshot),
+                })
+                listener.put_nowait(None)
+
+    def subscribe(self, after_seq: int, run_snapshot: Dict[str, Any]) -> asyncio.Queue:
+        # Snapshot + registration has no await point, making the handoff atomic
+        # with event publication on the API server loop.
+        listener: asyncio.Queue = asyncio.Queue(
+            maxsize=max(self.subscriber_size, len(self.events) + 2),
+        )
+        oldest = self.events[0]["seq"] if self.events else self.next_seq
+        latest = self.next_seq - 1
+        if after_seq < oldest - 1:
+            listener.put_nowait({
+                "event": "replay_truncated",
+                "reason": "buffer_overflow",
+                "requested_seq": after_seq,
+                "oldest_available_seq": oldest,
+                "latest_seq": latest,
+                "run": dict(run_snapshot),
+            })
+        for event in self.events:
+            if event["seq"] > after_seq:
+                listener.put_nowait(event)
+        if self.closed:
+            listener.put_nowait(None)
+        else:
+            self.listeners.add(listener)
+        return listener
+
+    def unsubscribe(self, listener: asyncio.Queue) -> None:
+        self.listeners.discard(listener)
+
+    def close(self) -> None:
+        self.closed = True
+        for listener in tuple(self.listeners):
+            try:
+                listener.put_nowait(None)
+            except asyncio.QueueFull:
+                while not listener.empty():
+                    listener.get_nowait()
+                listener.put_nowait(None)
+        self.listeners.clear()
 
 
 def _hermes_version() -> str:
@@ -877,8 +953,8 @@ class APIServerAdapter(BasePlatformAdapter):
         self._runner: Optional["web.AppRunner"] = None
         self._site: Optional["web.TCPSite"] = None
         self._response_store = ResponseStore()
-        # Active run streams: run_id -> asyncio.Queue of SSE event dicts
-        self._run_streams: Dict[str, "asyncio.Queue[Optional[Dict]]"] = {}
+        # Per-run bounded replay logs and independent live subscribers.
+        self._run_streams: Dict[str, _RunEventStream] = {}
         # Creation timestamps for orphaned-run TTL sweep
         self._run_streams_created: Dict[str, float] = {}
         # Active run agent/task references for stop support
@@ -4103,6 +4179,19 @@ class APIServerAdapter(BasePlatformAdapter):
 
     _RUN_STREAM_TTL = 300  # seconds before orphaned runs are swept
     _RUN_STATUS_TTL = 3600  # seconds to retain terminal run status for polling
+    _RUN_EVENT_REPLAY_SIZE = 256
+    _RUN_EVENT_SUBSCRIBER_SIZE = 64
+
+    def _new_run_event_stream(self) -> _RunEventStream:
+        return _RunEventStream(
+            replay_size=self._RUN_EVENT_REPLAY_SIZE,
+            subscriber_size=self._RUN_EVENT_SUBSCRIBER_SIZE,
+        )
+
+    def _publish_run_event(self, run_id: str, event: Dict[str, Any]) -> None:
+        stream = self._run_streams.get(run_id)
+        if stream is not None:
+            stream.publish(event, self._run_statuses.get(run_id, {}))
 
     def _set_run_status(self, run_id: str, status: str, **fields: Any) -> Dict[str, Any]:
         """Update pollable run status without exposing private agent objects."""
@@ -4127,11 +4216,8 @@ class APIServerAdapter(BasePlatformAdapter):
                 self._run_statuses.get(run_id, {}).get("status", "running"),
                 last_event=event.get("event"),
             )
-            q = self._run_streams.get(run_id)
-            if q is None:
-                return
             try:
-                loop.call_soon_threadsafe(q.put_nowait, event)
+                loop.call_soon_threadsafe(self._publish_run_event, run_id, event)
             except Exception:
                 pass
 
@@ -4252,9 +4338,9 @@ class APIServerAdapter(BasePlatformAdapter):
         approval_session_key = run_id
         ephemeral_system_prompt = instructions
         loop = asyncio.get_running_loop()
-        q: "asyncio.Queue[Optional[Dict]]" = asyncio.Queue()
+        stream = self._new_run_event_stream()
         created_at = time.time()
-        self._run_streams[run_id] = q
+        self._run_streams[run_id] = stream
         self._run_streams_created[run_id] = created_at
         self._run_approval_sessions[run_id] = approval_session_key
 
@@ -4265,7 +4351,7 @@ class APIServerAdapter(BasePlatformAdapter):
             if delta is None:
                 return
             try:
-                loop.call_soon_threadsafe(q.put_nowait, {
+                loop.call_soon_threadsafe(self._publish_run_event, run_id, {
                     "event": "message.delta",
                     "run_id": run_id,
                     "timestamp": time.time(),
@@ -4320,7 +4406,7 @@ class APIServerAdapter(BasePlatformAdapter):
                         last_event="approval.request",
                     )
                     try:
-                        loop.call_soon_threadsafe(q.put_nowait, event)
+                        loop.call_soon_threadsafe(self._publish_run_event, run_id, event)
                     except Exception:
                         pass
 
@@ -4377,7 +4463,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 # block below never fires — issue #15561).
                 if isinstance(result, dict) and result.get("failed"):
                     error_msg = _redact_api_error_text(result.get("error") or "agent run failed")
-                    q.put_nowait({
+                    self._publish_run_event(run_id, {
                         "event": "run.failed",
                         "run_id": run_id,
                         "timestamp": time.time(),
@@ -4391,7 +4477,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     )
                 else:
                     final_response = result.get("final_response", "") if isinstance(result, dict) else ""
-                    q.put_nowait({
+                    self._publish_run_event(run_id, {
                         "event": "run.completed",
                         "run_id": run_id,
                         "timestamp": time.time(),
@@ -4412,7 +4498,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     last_event="run.cancelled",
                 )
                 try:
-                    q.put_nowait({
+                    self._publish_run_event(run_id, {
                         "event": "run.cancelled",
                         "run_id": run_id,
                         "timestamp": time.time(),
@@ -4429,7 +4515,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     last_event="run.failed",
                 )
                 try:
-                    q.put_nowait({
+                    self._publish_run_event(run_id, {
                         "event": "run.failed",
                         "run_id": run_id,
                         "timestamp": time.time(),
@@ -4451,7 +4537,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     pass
                 # Sentinel: signal SSE stream to close
                 try:
-                    q.put_nowait(None)
+                    stream.close()
                 except Exception:
                     pass
                 self._active_run_agents.pop(run_id, None)
@@ -4507,8 +4593,23 @@ class APIServerAdapter(BasePlatformAdapter):
         else:
             return web.json_response(_openai_error(f"Run not found: {run_id}", code="run_not_found"), status=404)
 
-        q = self._run_streams[run_id]
+        stream = self._run_streams[run_id]
+        raw_cursor = request.query.get("after")
+        if raw_cursor is None:
+            raw_cursor = request.headers.get("Last-Event-ID", "0")
+        try:
+            after_seq = int(raw_cursor)
+            if after_seq < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return web.json_response(
+                _openai_error("Invalid run event cursor", code="invalid_event_cursor"),
+                status=400,
+            )
 
+        # No await between snapshotting replay state and registering the live
+        # listener, so an event cannot fall into a replay/listener race window.
+        listener = stream.subscribe(after_seq, self._run_statuses.get(run_id, {}))
         response = web.StreamResponse(
             status=200,
             headers={
@@ -4522,21 +4623,21 @@ class APIServerAdapter(BasePlatformAdapter):
         try:
             while True:
                 try:
-                    event = await asyncio.wait_for(q.get(), timeout=30.0)
+                    event = await asyncio.wait_for(listener.get(), timeout=30.0)
                 except asyncio.TimeoutError:
                     await response.write(b": keepalive\n\n")
                     continue
                 if event is None:
-                    # Run finished — send final SSE comment and close
                     await response.write(b": stream closed\n\n")
                     break
-                payload = f"data: {json.dumps(event)}\n\n"
+                event_id = event.get("seq")
+                id_frame = f"id: {event_id}\n" if event_id is not None else ""
+                payload = f"{id_frame}data: {json.dumps(event)}\n\n"
                 await response.write(payload.encode())
         except Exception as exc:
             logger.debug("[api_server] SSE stream error for run %s: %s", run_id, exc)
         finally:
-            self._run_streams.pop(run_id, None)
-            self._run_streams_created.pop(run_id, None)
+            stream.unsubscribe(listener)
 
         return response
 
@@ -4609,18 +4710,16 @@ class APIServerAdapter(BasePlatformAdapter):
             )
 
         self._set_run_status(run_id, "running", last_event="approval.responded")
-        q = self._run_streams.get(run_id)
-        if q is not None:
-            try:
-                q.put_nowait({
-                    "event": "approval.responded",
-                    "run_id": run_id,
-                    "timestamp": time.time(),
-                    "choice": choice,
-                    "resolved": resolved,
-                })
-            except Exception:
-                pass
+        try:
+            self._publish_run_event(run_id, {
+                "event": "approval.responded",
+                "run_id": run_id,
+                "timestamp": time.time(),
+                "choice": choice,
+                "resolved": resolved,
+            })
+        except Exception:
+            pass
 
         return web.json_response({
             "object": "hermes.run.approval_response",
