@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 contextBridge.exposeInMainWorld('hermesDesktop', {
+  // Bridge host marker — the renderer's web bridge (src/web-bridge) sets
+  // 'web'; UI gates Electron-only surface on this field.
+  host: 'electron',
   getConnection: profile => ipcRenderer.invoke('hermes:connection', profile),
   revalidateConnection: () => ipcRenderer.invoke('hermes:connection:revalidate'),
   touchBackend: profile => ipcRenderer.invoke('hermes:backend:touch', profile),

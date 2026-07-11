@@ -14,6 +14,14 @@ import { I18nProvider } from './i18n'
 import { installClipboardShim } from './lib/clipboard'
 import { queryClient } from './lib/query-client'
 import { ThemeProvider } from './themes/context'
+import { installWebBridge } from './web-bridge'
+
+// When no Electron preload has installed the IPC bridge, this window is a
+// plain browser (the gateway-served /app surface, or vite dev against a
+// dashboard backend): install the web bridge so the same renderer runs
+// unmodified. Under Electron the preload has already claimed the window and
+// this is a no-op. See docs/plans/2026-07-10-001.
+installWebBridge()
 
 installClipboardShim()
 

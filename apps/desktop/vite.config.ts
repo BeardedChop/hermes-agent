@@ -72,7 +72,20 @@ export default defineConfig({
     strictPort: true,
     fs: {
       allow: fsAllow
-    }
+    },
+    // PHASE 0 SPIKE: `HERMES_SPIKE_BACKEND=http://127.0.0.1:<port> vite` proxies
+    // /api (HTTP + WS) to a running `hermes dashboard`, standing in for the
+    // same-origin serving the real deployment gets from mount_spa. Unset (the
+    // normal Electron dev flow) this adds nothing. See docs/plans/2026-07-10-001.
+    proxy: process.env.HERMES_SPIKE_BACKEND
+      ? {
+          '/api': {
+            target: process.env.HERMES_SPIKE_BACKEND,
+            changeOrigin: true,
+            ws: true
+          }
+        }
+      : undefined
   },
   preview: {
     host: '127.0.0.1',
