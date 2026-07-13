@@ -33,6 +33,7 @@ approvals:
   mode: smart                     # smart | manual | off
   timeout: 60                     # seconds to wait for user response (default: 60)
   cron_mode: deny                 # deny | approve — what cron jobs do when they hit a dangerous command
+  context: null                   # optional operator guidance for smart review
   mcp_reload_confirm: true        # /reload-mcp asks before invalidating the MCP tool cache
   destructive_slash_confirm: true # /clear, /new, /reset, /undo prompt before discarding state
 ```
@@ -44,6 +45,7 @@ The full set of keys:
 | `mode` | `smart` | Approval policy for dangerous shell commands — see the table below. |
 | `timeout` | `60` | Seconds Hermes waits for an approval reply before timing out. |
 | `cron_mode` | `deny` | How [cron jobs](./features/cron.md) behave headlessly when they trigger a dangerous-command prompt. `deny` blocks the command (the agent must find another path); `approve` auto-approves everything in cron context. |
+| `context` | `null` | Optional operator guidance added to smart reviews. It is fenced as untrusted policy data, and the reviewer is explicitly instructed not to let it override the built-in approval rules. |
 | `mcp_reload_confirm` | `true` | When true, `/reload-mcp` asks before rebuilding the MCP tool set. Rebuilding invalidates the provider prompt cache (tool schemas live in the system prompt), so the next message re-sends full input tokens. Users who click **Always Approve** flip this key to `false`. |
 | `destructive_slash_confirm` | `true` | When true, destructive session slash commands (`/clear`, `/new`, `/reset`, `/undo`) prompt before discarding conversation state. Three-option dialog (Approve Once / Always Approve / Cancel) routed through native yes/no buttons on Telegram, Discord, and Slack; text fallback elsewhere. Users who click **Always Approve** flip this key to `false`. TUI uses its own modal overlay (set `HERMES_TUI_NO_CONFIRM=1` to opt out there). |
 
@@ -52,6 +54,27 @@ The full set of keys:
 | **smart** (default) | Use an auxiliary LLM to assess risk. Low-risk commands (e.g., `python -c "print('hello')"`) are auto-approved for that command only. Genuinely dangerous commands are auto-denied. Uncertain cases escalate to a manual prompt. |
 | **manual** | Always prompt the user for approval on dangerous commands. |
 | **off** | Disable all approval checks — equivalent to running with `--yolo`. All commands execute without prompts. |
+
+#### Smart approval context
+
+Specialized agents can give the reviewer narrow operational context without
+adding executable hooks:
+
+```yaml
+approvals:
+  mode: smart
+  context: |
+    This agent administers Home Assistant. Requests to homeassistant.local
+    are expected; still deny commands that expose credentials or alter
+    unrelated hosts.
+```
+
+The value is operator-controlled configuration, not a command allowlist. Hermes
+keeps it out of the reviewer system prompt, XML-escapes it inside a dedicated
+`<approval-context>` block, and tells the reviewer that it cannot request a
+verdict or make a dangerous command safe. Keep the guidance specific and never
+copy text from untrusted messages, web pages, tool output, or model-generated
+content into this setting.
 
 :::warning
 Setting `approvals.mode: off` disables all safety prompts. Use only in trusted environments (CI/CD, containers, etc.).

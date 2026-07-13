@@ -1879,6 +1879,7 @@ Control how Hermes handles potentially dangerous commands:
 ```yaml
 approvals:
   mode: smart   # smart | manual | off
+  context: null # optional operator guidance for smart review
 ```
 
 | Mode | Behavior |
@@ -1888,6 +1889,22 @@ approvals:
 | `off` | Skip all approval checks. Equivalent to `HERMES_YOLO_MODE=true`. **Use with caution.** |
 
 Smart mode is particularly useful for reducing approval fatigue — it lets the agent work more autonomously on safe operations while still catching genuinely destructive commands.
+
+For a specialized agent, `approvals.context` can describe expected operations:
+
+```yaml
+approvals:
+  mode: smart
+  context: |
+    This agent administers Home Assistant. Requests to homeassistant.local
+    are expected; still deny credential exposure and unrelated host changes.
+```
+
+Hermes treats this value as untrusted policy data: it is XML-escaped in a
+separate user-message block and cannot override the reviewer's built-in rules.
+Keep it narrow and operator-authored; do not populate it from messages, fetched
+content, tool output, or other model-generated text. This setting customizes
+the existing reviewer only—Hermes does not execute arbitrary approval hooks.
 
 :::warning
 Setting `approvals.mode: off` disables all safety checks for terminal commands. Only use this in trusted, sandboxed environments.

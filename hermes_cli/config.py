@@ -2534,6 +2534,9 @@ DEFAULT_CONFIG = {
         "mode": "smart",
         "timeout": 60,
         "cron_mode": "deny",
+        # Optional operator guidance for the smart-approval reviewer. This is
+        # fenced as untrusted policy data and cannot override approval rules.
+        "context": None,
         # User-defined deny rules: fnmatch globs matched against terminal
         # commands. A match blocks the command unconditionally — BEFORE the
         # --yolo / /yolo / mode=off bypass — making this the user-editable
