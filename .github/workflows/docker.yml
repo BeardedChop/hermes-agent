@@ -144,11 +144,51 @@ jobs:
           OPENAI_API_KEY: ""
           NOUS_API_KEY: ""
           # Profile every docker subprocess call so we can diagnose why
-          # the suite is slow on CI vs. local. The report is uploaded
-          # as an artifact below.
+          # the suite is slow on CI vs. local. Each per-file subprocess
+          # writes its own docker-test-profile-<pid>.json; the merge
+          # step below combines them into a single report.
           HERMES_DOCKER_TEST_PROFILE: "1"
         run: |
           scripts/run_tests.sh tests/docker/ --file-timeout 600
+
+      - name: Merge docker test profiles
+        if: always()
+        run: |
+          python3 -c "
+          import json, glob, sys
+          files = sorted(glob.glob('docker-test-profile-*.json'))
+          if not files:
+              print('No per-PID profile files found — profiling may not have activated')
+              sys.exit(0)
+          merged = {'tests': [], 'summary': {}}
+          for f in files:
+              with open(f) as fh:
+                  data = json.load(fh)
+              merged['tests'].extend(data.get('tests', []))
+          # Recompute summary aggregates from merged tests.
+          subcmd_totals = {}
+          subcmd_counts = {}
+          for t in merged['tests']:
+              for sub, info in t.get('by_subcommand', {}).items():
+                  subcmd_totals[sub] = subcmd_totals.get(sub, 0) + info['total_s']
+                  subcmd_counts[sub] = subcmd_counts.get(sub, 0) + info['count']
+          merged['summary'] = {
+              'total_tests': len(merged['tests']),
+              'total_calls': sum(subcmd_counts.values()),
+              'total_docker_s': round(sum(subcmd_totals.values()), 3),
+              'by_subcommand': {
+                  sub: {
+                      'count': subcmd_counts[sub],
+                      'total_s': round(subcmd_totals[sub], 3),
+                      'avg_s': round(subcmd_totals[sub] / subcmd_counts[sub], 3) if subcmd_counts[sub] else 0,
+                  }
+                  for sub in sorted(subcmd_totals, key=lambda s: subcmd_totals[s], reverse=True)
+              },
+          }
+          with open('docker-test-profile.json', 'w') as fh:
+              json.dump(merged, fh, indent=2)
+          print(f'Merged {len(files)} per-PID profiles ({len(merged[\"tests\"])} tests)')
+          "
 
       - name: Upload docker test profile
         if: always()

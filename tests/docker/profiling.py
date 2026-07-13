@@ -7,7 +7,9 @@ which docker operations dominate the slow CI runs.
 
 Outputs:
   - JSON report at ``$HERMES_DOCKER_PROFILE_OUT`` (default:
-    ``docker-test-profile.json`` in the repo root).
+    ``docker-test-profile-{pid}.json`` in the repo root — per-PID
+    because run_tests_parallel.py spawns each test file in its own
+    subprocess).
   - Console summary on stderr at session end.
 
 The plugin is a no-op when the env var is not set — zero overhead on
@@ -62,7 +64,6 @@ class TestProfile:
         """Group calls by the first docker subcommand (run, exec, restart, ...)."""
         groups: dict[str, list[DockerCall]] = defaultdict(list)
         for c in self.calls:
-            # argv[0] = "docker", argv[1] = subcommand
             sub = c.argv[1] if len(c.argv) > 1 else "?"
             groups[sub].append(c)
         return groups
@@ -131,8 +132,8 @@ class ProfileCollector:
         subprocess.run = self._original_run
         self._patched = False
 
-    def write_report(self, out_path: Path) -> None:
-        """Write the JSON report."""
+    def build_report(self) -> dict[str, Any]:
+        """Build the JSON-serializable report dict."""
         report: dict[str, Any] = {
             "tests": [],
             "summary": {},
@@ -142,12 +143,12 @@ class ProfileCollector:
         subcmd_totals: dict[str, float] = defaultdict(float)
         subcmd_counts: dict[str, int] = defaultdict(int)
 
-        for name, tp in sorted(
+        for _name, tp in sorted(
             self.tests.items(), key=lambda x: x[1].total_docker_s, reverse=True
         ):
             by_sub = tp.by_subcommand()
             test_entry: dict[str, Any] = {
-                "name": name,
+                "name": tp.name,
                 "total_docker_s": round(tp.total_docker_s, 3),
                 "call_count": tp.call_count,
                 "by_subcommand": {
@@ -171,7 +172,7 @@ class ProfileCollector:
                 },
                 "calls": [
                     {
-                        "argv": " ".join(c.argv[:8]),  # truncate long argv
+                        "argv": " ".join(c.argv[:8]),
                         "duration_s": c.duration_s,
                         "returncode": c.returncode,
                     }
@@ -202,8 +203,13 @@ class ProfileCollector:
                 )
             },
         }
+        return report
 
-        out_path.write_text(json.dumps(report, indent=2) + "\n")
+    def write_report(self, out_path: Path) -> None:
+        """Write the JSON report."""
+        out_path.write_text(
+            json.dumps(self.build_report(), indent=2) + "\n"
+        )
 
     def print_summary(self) -> None:
         """Print a human-readable summary to stderr."""
@@ -215,7 +221,6 @@ class ProfileCollector:
         print("[docker-profile] Docker operation timing breakdown", file=sys.stderr)
         print("=" * 72, file=sys.stderr)
 
-        # Summary by subcommand
         subcmd_totals: dict[str, float] = defaultdict(float)
         subcmd_counts: dict[str, int] = defaultdict(int)
         for tp in self.tests.values():
@@ -225,7 +230,8 @@ class ProfileCollector:
 
         total = sum(subcmd_totals.values())
         print(
-            f"\n  Total docker time: {total:.1f}s across {sum(subcmd_counts.values())} calls\n",
+            f"\n  Total docker time: {total:.1f}s across"
+            f" {sum(subcmd_counts.values())} calls\n",
             file=sys.stderr,
         )
         print(
@@ -236,7 +242,9 @@ class ProfileCollector:
             f"  {'─' * 15} {'─' * 8} {'─' * 10} {'─' * 8} {'─' * 6}",
             file=sys.stderr,
         )
-        for sub in sorted(subcmd_totals, key=lambda s: subcmd_totals[s], reverse=True):
+        for sub in sorted(
+            subcmd_totals, key=lambda s: subcmd_totals[s], reverse=True
+        ):
             t = subcmd_totals[sub]
             n = subcmd_counts[sub]
             pct = (t / total * 100) if total else 0
@@ -245,7 +253,6 @@ class ProfileCollector:
                 file=sys.stderr,
             )
 
-        # Top 10 slowest tests
         print(
             f"\n  Top 10 slowest tests (by docker operation time):\n",
             file=sys.stderr,
@@ -255,7 +262,8 @@ class ProfileCollector:
         )
         for i, tp in enumerate(sorted_tests[:10], 1):
             print(
-                f"  {i:>2}. {tp.total_docker_s:>6.1f}s  {tp.call_count:>3} calls  {tp.name}",
+                f"  {i:>2}. {tp.total_docker_s:>6.1f}s"
+                f"  {tp.call_count:>3} calls  {tp.name}",
                 file=sys.stderr,
             )
             by_sub = tp.by_subcommand()
@@ -272,7 +280,6 @@ class ProfileCollector:
                     file=sys.stderr,
                 )
 
-        # Slowest individual calls
         all_calls: list[tuple[str, DockerCall]] = []
         for tp in self.tests.values():
             for c in tp.calls:
@@ -337,10 +344,11 @@ def pytest_sessionfinish(session, exitstatus):
     collector = _get_collector()
     collector.uninstall_patch()
 
-    out = os.environ.get(
-        "HERMES_DOCKER_PROFILE_OUT",
-        str(Path.cwd() / "docker-test-profile.json"),
-    )
+    # Default to a per-PID filename so parallel subprocesses (one per
+    # test file, spawned by run_tests_parallel.py) don't clobber each
+    # other. The CI step merges them into a single report.
+    default_out = str(Path.cwd() / f"docker-test-profile-{os.getpid()}.json")
+    out = os.environ.get("HERMES_DOCKER_PROFILE_OUT", default_out)
     out_path = Path(out)
     collector.write_report(out_path)
     collector.print_summary()
