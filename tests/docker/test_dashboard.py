@@ -165,7 +165,7 @@ def test_dashboard_restarts_after_crash(
         if first_pids:
             first_pid = first_pids[0]
             break
-        time.sleep(0.5)
+        time.sleep(0.25)
     assert first_pid is not None, "Could not capture initial dashboard PID"
 
     # Kill the dashboard. The dashboard process runs as hermes, so the
@@ -180,7 +180,7 @@ def test_dashboard_restarts_after_crash(
         pids = r.stdout.strip().split() if r.returncode == 0 else []
         if pids and pids[0] != first_pid:
             return  # success
-        time.sleep(0.5)
+        time.sleep(0.25)
 
     raise AssertionError(
         f"Dashboard not restarted after kill (first_pid={first_pid})"
@@ -255,7 +255,7 @@ except urllib.error.HTTPError as h:
                 last_err = f"parse: {exc!r} / stdout={r.stdout!r}"
         else:
             last_err = f"rc={r.returncode} stderr={r.stderr!r}"
-        time.sleep(0.5)
+        time.sleep(0.25)
     raise AssertionError(
         f"Probe of {path} never returned HTTP within {deadline_s}s; "
         f"last error: {last_err}"

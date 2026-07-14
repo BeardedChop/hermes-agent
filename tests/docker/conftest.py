@@ -276,7 +276,7 @@ def poll_container(
     probe: str,
     *,
     deadline_s: float = 30.0,
-    interval_s: float = 0.5,
+    interval_s: float = 0.25,
     user: str = "hermes",
 ) -> tuple[bool, str]:
     """Repeatedly run ``probe`` inside the container until it exits 0 or
@@ -343,7 +343,7 @@ def wait_for_log(
 
 
 def wait_for_docker_logs(
-    container: str, needle: str, *, deadline_s: float = 30.0, interval_s: float = 0.5,
+    container: str, needle: str, *, deadline_s: float = 30.0, interval_s: float = 0.25,
 ) -> str:
     """Poll ``docker logs`` until ``needle`` appears or deadline expires.
 

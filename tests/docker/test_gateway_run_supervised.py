@@ -79,7 +79,7 @@ def _wait_for_gateway_or_exit(
             )
             if pgrep.returncode == 0:
                 return "running"
-        time.sleep(0.5)
+        time.sleep(0.25)
     return status
 
 
@@ -380,7 +380,7 @@ def test_dashboard_supervised_when_env_set(
         if _svstat_wants_up(container_name, "gateway-default"):
             ok_gateway = True
             break
-        time.sleep(0.5)
+        time.sleep(0.25)
     assert ok_gateway, (
         f"gateway-default slot not want-up: {_svstat(container_name)!r}"
     )
@@ -391,7 +391,7 @@ def test_dashboard_supervised_when_env_set(
         if _svstat_wants_up(container_name, "dashboard"):
             ok_dash = True
             break
-        time.sleep(0.5)
+        time.sleep(0.25)
     assert ok_dash, (
         f"dashboard slot not want-up: {_svstat(container_name, 'dashboard')!r}"
     )
