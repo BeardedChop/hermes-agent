@@ -168,14 +168,22 @@ jobs:
           # Recompute summary aggregates from merged tests.
           subcmd_totals = {}
           subcmd_counts = {}
+          total_sleep = 0
+          total_sleeps = 0
           for t in merged['tests']:
               for sub, info in t.get('by_subcommand', {}).items():
                   subcmd_totals[sub] = subcmd_totals.get(sub, 0) + info['total_s']
                   subcmd_counts[sub] = subcmd_counts.get(sub, 0) + info['count']
+              total_sleep += t.get('total_sleep_s', 0)
+              total_sleeps += t.get('sleep_count', 0)
+          total_docker = sum(subcmd_totals.values())
           merged['summary'] = {
               'total_tests': len(merged['tests']),
               'total_calls': sum(subcmd_counts.values()),
-              'total_docker_s': round(sum(subcmd_totals.values()), 3),
+              'total_sleeps': total_sleeps,
+              'total_docker_s': round(total_docker, 3),
+              'total_sleep_s': round(total_sleep, 3),
+              'total_wall_s': round(total_docker + total_sleep, 3),
               'by_subcommand': {
                   sub: {
                       'count': subcmd_counts[sub],
@@ -187,7 +195,7 @@ jobs:
           }
           with open('docker-test-profile.json', 'w') as fh:
               json.dump(merged, fh, indent=2)
-          print(f'Merged {len(files)} per-PID profiles ({len(merged[\"tests\"])} tests)')
+          print(f'Merged {len(files)} per-PID profiles ({len(merged[\"tests\"])} tests, {total_docker:.0f}s docker + {total_sleep:.0f}s sleep = {total_docker + total_sleep:.0f}s wall)')
           "
 
       - name: Upload docker test profile
