@@ -32,7 +32,13 @@ import type { ModelOptionProvider, OAuthProvider } from '@/types/hermes'
 import { DocsLink, FlowPanel, Status } from './flow'
 import { DetectedLocalServerRow, FeaturedProviderRow, KeyProviderRow, ProviderRow, sortProviders } from './providers'
 
-export { FeaturedProviderRow, KeyProviderRow, ProviderRow, providerTitle, sortProviders } from './providers'
+export {
+  FeaturedProviderRow,
+  KeyProviderRow,
+  ProviderRow,
+  providerTitle,
+  sortProviders
+} from './providers'
 
 interface DesktopOnboardingOverlayProps {
   enabled: boolean
@@ -56,6 +62,12 @@ const API_KEY_OPTIONS: ApiKeyOption[] = [
     name: 'OpenRouter',
     envKey: 'OPENROUTER_API_KEY',
     docsUrl: 'https://openrouter.ai/keys'
+  },
+  {
+    id: 'fireworks',
+    name: 'Fireworks AI',
+    envKey: 'FIREWORKS_API_KEY',
+    docsUrl: 'https://app.fireworks.ai/settings/users/api-keys'
   },
   {
     id: 'openai',
@@ -397,6 +409,13 @@ export function Picker({ ctx }: { ctx: OnboardingContext }) {
   const { t } = useI18n()
   const { localEndpoint, manual, mode, providers } = useStore($desktopOnboarding)
   const [showAll, setShowAll] = useState(readShowAll)
+  // Which key-form option to preselect when we flip to 'apikey' mode. The
+  // OpenRouter row selects its key; the generic link lands on the first option.
+  const [apiKeyInitialEnv, setApiKeyInitialEnv] = useState<string | undefined>(undefined)
+  const openKeyForm = (envKey?: string) => {
+    setApiKeyInitialEnv(envKey)
+    setOnboardingMode('apikey')
+  }
   const ordered = useMemo(() => (providers ? sortProviders(providers) : []), [providers])
   const hasOauth = ordered.length > 0
   const apiKeyOptions = useApiKeyCatalog()
@@ -426,7 +445,7 @@ export function Picker({ ctx }: { ctx: OnboardingContext }) {
       <div className="grid gap-3">
         <ApiKeyForm
           canGoBack={hasOauth && !localEndpoint}
-          initialEnvKey={localEndpoint ? 'OPENAI_BASE_URL' : undefined}
+          initialEnvKey={localEndpoint ? 'OPENAI_BASE_URL' : apiKeyInitialEnv}
           onBack={() => setOnboardingMode('oauth')}
           onSave={(envKey, value, name, apiKey) => saveOnboardingApiKey(envKey, value, name, ctx, apiKey)}
           options={apiKeyOptions}
@@ -467,7 +486,7 @@ export function Picker({ ctx }: { ctx: OnboardingContext }) {
             {rest.map(p => (
               <ProviderRow key={p.id} onSelect={select} provider={p} />
             ))}
-            <KeyProviderRow onClick={() => setOnboardingMode('apikey')} />
+            <KeyProviderRow onClick={() => openKeyForm('OPENROUTER_API_KEY')} />
           </>
         ) : null}
       </div>
@@ -490,7 +509,7 @@ export function Picker({ ctx }: { ctx: OnboardingContext }) {
         {manual ? <span /> : <ChooseLaterLink />}
         <Button
           className="-mr-2 font-medium"
-          onClick={() => setOnboardingMode('apikey')}
+          onClick={() => openKeyForm()}
           size="xs"
           type="button"
           variant="text"
