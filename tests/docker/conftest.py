@@ -88,6 +88,42 @@ def container_name(request) -> Iterator[str]:
     )
 
 
+@pytest.fixture(scope="module")
+def shared_container(built_image: str, request) -> Iterator[str]:
+    """A long-lived container shared across all tests in a module.
+
+    Starts one ``sleep infinity`` container, waits for s6 cont-init to
+    finish, yields the container name, and tears it down at module exit.
+    Tests that only need to *read* static image state (env vars, file
+    existence, immutable-permission checks, etc.) can share this instead
+    of each paying the full ``docker run`` + cont-init startup cost.
+
+    Tests that *mutate* container state (config changes, gateway starts,
+    restarts, etc.) should still use ``container_name`` + ``start_container``
+    for isolation.
+    """
+    safe = request.module.__name__.replace(".", "-")
+    name = f"hermes-shared-{safe}"
+    # Clean up any leftover from a prior run.
+    subprocess.run(
+        ["docker", "rm", "-f", name],
+        capture_output=True, timeout=10,
+    )
+    r = subprocess.run(
+        ["docker", "run", "-d", "--name", name, built_image, "sleep", "infinity"],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert r.returncode == 0, f"docker run failed: {r.stderr}"
+    try:
+        wait_for_container_ready(name)
+        yield name
+    finally:
+        subprocess.run(
+            ["docker", "rm", "-f", name],
+            capture_output=True, timeout=10,
+        )
+
+
 # ---------------------------------------------------------------------------
 # docker_exec — default to the unprivileged hermes user
 # ---------------------------------------------------------------------------
