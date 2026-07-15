@@ -338,8 +338,13 @@ def _require_tty(command_name: str) -> None:
         sys.exit(1)
 
 
-# Add project root to path
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+# Add project root to path.
+# In a checkout, this is the repo root (same as Path(__file__).parent.parent).
+# In a slot (managed bundle), this is the bundle root (where manifest.json lives).
+# get_artifact_root() walks up from __file__ to find the right directory.
+from hermes_constants import get_artifact_root as _get_artifact_root
+
+PROJECT_ROOT = _get_artifact_root()
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
