@@ -646,7 +646,7 @@ Consequences:
   are fine here — unlike the update flip, which is why the flip commits
   through `current.txt` rather than any link, §2.2.)
 
-### 2.5.1a The cwd guard: standing in a checkout ≠ running that checkout
+### 2.5.1a The cwd guard: inside a checkout, always say which hermes
 
 Activation-by-symlink leaves one honest ambiguity: your PATH `hermes`
 resolves to one tree (a managed slot, or checkout A) while your cwd is
@@ -655,35 +655,41 @@ code from somewhere else — worst on `hermes update`, where "update the
 thing I'm standing in" and "update the install I'm running" silently
 diverge.
 
-Rule: **a mismatch refuses; a match runs.**
+Rule: **inside any hermes-agent checkout, plain `hermes` refuses — you
+always state which one you mean.**
 
-- The launcher compares its own tree root (§2.5.1 resolution) against the
-  nearest enclosing hermes-agent checkout above cwd (walk up for a
-  `pyproject.toml` with `name = "hermes-agent"`; a worktree's `.git`
-  *file* marks the tree boundary the same as a `.git` dir).
-- No enclosing checkout, or it's the same tree the launcher belongs to →
-  run normally. Running `./bin/hermes` inside its own worktree never
-  needs a flag.
-- Mismatch → refuse fast (before any imports) with the two ways out:
+- The launcher walks up from cwd for the nearest enclosing hermes-agent
+  checkout (a `pyproject.toml` with `name = "hermes-agent"`; a worktree's
+  `.git` *file* marks the tree boundary the same as a `.git` dir).
+- No enclosing checkout → run normally. The flag tax exists only where
+  the ambiguity exists.
+- Inside a checkout → refuse fast (before any imports), even when the
+  invoked launcher IS that checkout's own. Consistency over cleverness:
+  "cwd inside a checkout ⇒ flag required" is one rule with no cases to
+  reason about, and it means muscle-memory `hermes update` can never hit
+  the wrong tree — today's #1 way to shred a dev setup. The two ways out:
 
 ```
-hermes: you are inside a hermes-agent checkout (~/src/hermes-agent/.worktrees/foo)
-but this `hermes` runs from the managed install.
-  hermes --dev       run THIS checkout's ./bin/hermes instead
-  hermes --global    run the managed install from here anyway
+hermes: you are inside a hermes-agent checkout (~/src/hermes-agent/.worktrees/foo).
+say which hermes you mean:
+  hermes --dev       run THIS checkout's ./bin/hermes
+  hermes --global    run the installed hermes (managed or PATH target)
 ```
 
 - `--dev` re-execs the cwd checkout's `bin/hermes` (which self-checks its
   venv per §2.5.1 and says "run `hermes dev sync`" if unprovisioned).
-  `--global` proceeds with the invoked launcher. Non-interactive callers
+  `--global` proceeds with the invoked launcher. Both flags are also
+  honored (as no-ops or re-exec respectively) outside checkouts, so
+  scripts can pin intent unconditionally. Non-interactive callers
   (gateway supervisor, cron, desktop backend spawn) run with cwd outside
-  any checkout, so services never trip the guard; scripts that do run
-  inside checkouts state their intent with a flag and become
-  self-documenting.
+  any checkout, so services never trip the guard; anything scripted that
+  does run inside a checkout states its intent and becomes
+  self-documenting. Shell-alias `hermes --dev` if you live in a worktree
+  all day.
 
 The guard makes the symlink model safe for people with several worktrees:
-which tree executes is always either unambiguous or explicitly chosen,
-never inferred wrong.
+inside a checkout, which tree executes is always explicit, never
+inferred.
 
 ### 2.5.2 Ejected updates: worktree instead of stash
 

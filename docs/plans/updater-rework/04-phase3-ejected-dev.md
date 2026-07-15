@@ -37,8 +37,9 @@ is NOT committed to git (platform-specific, binary-in-repo pain). Instead:
 Keep it under 30 lines; its ONLY jobs are env hygiene + venv exec +
 "run dev sync" error text when `.venv` is missing.
 
-**Step 2 (verify):** from this worktree: `./bin/hermes --version` works
-against `.venv`; delete `.venv` → clear error message, exit 3.
+**Step 2 (verify):** from this worktree: `./bin/hermes --dev --version`
+works against `.venv` (plain `--version` refuses per §2.5.1a — cwd is
+inside the checkout); delete `.venv` → clear error message, exit 3.
 
 **Step 3:** Commit: `feat(dev): in-repo launcher stub`.
 
@@ -170,14 +171,22 @@ target — check by resolving the PATH symlink).
 - Test: launcher unit tests + a case in the phase E2E
 
 **Step 1 (failing tests, pure logic):** `cwd_guard(launcher_tree, cwd,
-argv) -> Run | ReExec(path) | Refuse(msg)`:
-- no enclosing hermes-agent checkout above cwd → `Run`;
-- enclosing checkout == launcher's own tree → `Run` (`./bin/hermes`
-  inside its worktree never needs a flag);
-- mismatch + `--dev` → `ReExec(<cwd checkout>/bin/hermes)` (strip the
-  flag from argv);
-- mismatch + `--global` → `Run` (strip the flag);
-- mismatch + neither → `Refuse` with the §2.5.1a message (exit 2).
+argv) -> Run | ReExec(path) | Refuse(msg)`. STRICT rule: cwd inside any
+hermes-agent checkout ⇒ a flag is required, no exceptions:
+
+- no enclosing hermes-agent checkout above cwd → `Run` (flags accepted
+  as no-ops so scripts can pin intent unconditionally);
+- inside a checkout, no flag → `Refuse` with the §2.5.1a message
+  (exit 2) — even when the invoked launcher IS that checkout's own;
+- inside a checkout + `--dev`: launcher's own tree == the cwd checkout
+  → `Run` (strip the flag); otherwise → `ReExec(<cwd
+  checkout>/bin/hermes)` **retaining `--dev`** — the re-exec'd launcher
+  wakes up inside the same checkout and must resolve to `Run` on its
+  own pass, not refuse or re-exec forever. Assert exactly one hop in
+  the tests (the retained flag is what terminates the recursion);
+- inside a checkout + `--global` → `Run` with the invoked launcher
+  (strip the flag);
+- both flags → `Refuse` (contradictory).
 
 Enclosing-checkout detection: walk up from cwd to the first dir with
 `pyproject.toml` containing `name = "hermes-agent"` (string probe is
@@ -192,12 +201,13 @@ the same check in the `bin/hermes` stub for bare clones that haven't run
 `dev sync` yet.
 
 **Step 3:** green. Guard cases in the E2E (task 3.7): from inside
-checkout B with the symlink at checkout A → refuse; `--dev` runs B;
-`--global` runs A; from B via B's own `./bin/hermes` → runs without
-flags; from `$HOME` → managed runs without flags.
+checkout B, plain `hermes` refuses regardless of where the symlink
+points — `--dev` runs B (one hop, even when invoked via B's own
+`./bin/hermes`), `--global` runs the symlink target; from `$HOME`,
+plain `hermes` runs without flags.
 
-**Step 4:** Commit: `feat(dev): cwd guard — refuse ambiguous
-checkout/install mismatch`.
+**Step 4:** Commit: `feat(dev): cwd guard — explicit --dev/--global
+inside checkouts`.
 
 ## Task 3.5: `hermes eject`
 
@@ -240,8 +250,9 @@ text appears, tests still run.
 **Contract:**
 
 ```
-1. temp clone of this repo; ./bin/hermes --version works after
-   `hermes dev sync` (stub path AND native-launcher path).
+1. temp clone of this repo; ./bin/hermes --dev --version works after
+   `hermes dev sync` (stub path AND native-launcher path; --dev because
+   the invocation cwd is inside the checkout).
 2. Dirty the tree (append a comment to run_agent.py). Run
    hermes update, choose "switch" → .worktrees/<target> created +
    synced; symlink now points there; original tree's dirty diff
@@ -250,10 +261,11 @@ text appears, tests still run.
    dirty change still present.
 4. If a slot exists from phase 1's fixture: symlink to slot launcher →
    managed version runs. All three targets coexist.
-5. cwd-guard cases (task 3.4b): from inside worktree B with the symlink
-   at tree A → plain `hermes` refuses (exit 2); `hermes --dev` runs B;
-   `hermes --global` runs A; B's own `./bin/hermes` from inside B runs
-   with no flag; `hermes` from $HOME runs with no flag.
+5. cwd-guard cases (task 3.4b, strict): from inside worktree B, plain
+   `hermes` refuses (exit 2) no matter where the symlink points — even
+   via B's own `./bin/hermes`; `hermes --dev` runs B (assert one hop);
+   `hermes --global` runs the symlink target; from $HOME plain `hermes`
+   runs with no flag.
 6. hermes dev gc --keep 1 → old version-worktree removed; active one
    survives.
 ```
