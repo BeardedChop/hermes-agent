@@ -120,7 +120,22 @@ cp "$REPO_ROOT/uv.lock" "$WORK/uv.lock" 2>/dev/null || true
 VIRTUAL_ENV="$VENV_DIR" "$UV" sync --extra all --locked --no-editable --active \
     --project "$WORK" --python "$VENV_DIR/bin/python"
 
-# ─── runtime/node/ — Node LTS ──────────────────────────────────────────
+# Fix: uv --relocatable makes entry-point scripts relative but leaves the
+# python symlink absolute. In a bundle mounted at a different path (e.g.
+# docker /b instead of /tmp/e2e-bundle), the absolute symlink breaks.
+# Replace it with a relative symlink to the runtime python.
+echo "    Fixing venv python symlink to be relative..."
+PYTHON_SYMLINK="$VENV_DIR/bin/python"
+if [ -L "$PYTHON_SYMLINK" ]; then
+    TARGET=$(readlink "$PYTHON_SYMLINK")
+    if [[ "$TARGET" == /* ]]; then
+        # Absolute — convert to relative
+        REL_TARGET=$(python3 -c "import os.path; print(os.path.relpath('$TARGET', '$VENV_DIR/bin'))" 2>/dev/null || echo "")
+        if [ -n "$REL_TARGET" ]; then
+            ln -sf "$REL_TARGET" "$PYTHON_SYMLINK"
+        fi
+    fi
+fi
 
 echo "==> [5/7] Staging Node.js $NODE_VERSION runtime..."
 NODE_DIR="$OUT_DIR/runtime/node"
@@ -240,7 +255,9 @@ cat > "$OUT_DIR/bin/hermes" << 'STUB'
 #!/bin/sh
 # Phase 0 placeholder launcher shim.
 # Phase 1 replaces this with the native Rust launcher binary.
-# This shim execs the venv python directly, sidestepping entrypoint shebangs.
+# This shim execs the venv python, which knows about site-packages.
+# The venv's bin/python is a relative symlink to the bundle's CPython
+# (made relative by build-bundle.sh's post-venv fixup).
 DIR="$(cd "$(dirname "$0")" && pwd)"
 exec "$DIR/../runtime/venv/bin/python" -m hermes_cli.main "$@"
 STUB
