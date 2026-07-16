@@ -127,6 +127,30 @@ class TestWriteManifest:
         written = json.loads(manifest_path.read_text())
         assert written["schema"] == 1
 
+    def test_desktop_auto_detected_when_dir_present(self, bundle_fixture):
+        """When desktop=None, auto-detect desktop/ directory presence."""
+        (bundle_fixture / "desktop").mkdir()
+        (bundle_fixture / "desktop" / "app.asar").write_text("fake")
+        manifest = write_manifest(
+            bundle_fixture,
+            version="2026.07.14",
+            channel="nightly",
+            git_sha="a" * 40,
+            platform="linux-x64",
+        )
+        assert manifest["desktop"] is True
+
+    def test_desktop_auto_detected_when_dir_absent(self, bundle_fixture):
+        """When desktop=None and no desktop/ dir, desktop should be False."""
+        manifest = write_manifest(
+            bundle_fixture,
+            version="2026.07.14",
+            channel="nightly",
+            git_sha="a" * 40,
+            platform="linux-x64",
+        )
+        assert manifest["desktop"] is False
+
 
 class TestVerifyFileHashes:
     def test_clean_bundle_verifies(self, bundle_fixture):

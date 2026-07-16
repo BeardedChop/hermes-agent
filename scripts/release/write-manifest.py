@@ -85,13 +85,20 @@ def write_manifest(
     git_sha: str,
     platform: str,
     min_updater_version: str = DEFAULT_MIN_UPDATER_VERSION,
-    desktop: bool = False,
+    desktop: bool | None = None,
     extra_fields: dict | None = None,
 ) -> dict:
     """Write manifest.json for a bundle directory.
 
     Returns the manifest dict.
+
+    When ``desktop`` is None, auto-detects by checking for a ``desktop/``
+    subdirectory in the bundle. This prevents the manifest from reporting
+    ``"desktop": false`` when a desktop build is present but the caller
+    forgot to pass ``--desktop``.
     """
+    if desktop is None:
+        desktop = (bundle_dir / "desktop").is_dir()
     manifest: dict = {
         "schema": SCHEMA,
         "version": version,
