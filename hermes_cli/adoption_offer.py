@@ -92,9 +92,9 @@ def should_offer(
     if info is None:
         return False  # Not a legacy install (slot, docker, nix, etc.)
 
-    # For auto mode with pristine + non-interactive, the caller should
-    # invoke adopt directly. For prompt mode, show the offer.
-    if adopt_mode == "auto" and info.pristine and not is_interactive:
+    # For auto mode with pristine, auto-invoke adopt (interactive or not).
+    # For prompt mode, show the offer text.
+    if adopt_mode == "auto" and info.pristine:
         return True  # The caller will invoke adopt
 
     if not is_interactive:
@@ -137,10 +137,11 @@ def offer_adoption(
         if info is None:
             return
 
-        if adopt_mode == "auto" and info.pristine and not is_interactive:
-            # Auto-invoke adopt
+        if adopt_mode == "auto" and info.pristine:
+            # Auto-invoke adopt (interactive or not)
             import subprocess
 
+            print("→ Auto-adopting to managed release bundles...")
             subprocess.Popen(
                 ["hermes", "adopt", "--yes"],
                 start_new_session=True,

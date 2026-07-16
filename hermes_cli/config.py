@@ -3146,10 +3146,11 @@ DEFAULT_CONFIG = {
         # on non-admin accounts where `/Applications` is not writable.
         "refresh_cua_driver": True,
         # Adoption offer: whether to prompt legacy git-checkout installs to
-        # switch to managed release bundles. "prompt" (default) shows the
-        # offer once per 7 days; "auto" auto-adopts pristine non-interactive
-        # installs; "never" silences the offer entirely.
-        "adopt": "prompt",
+        # switch to managed release bundles. "auto" (default) auto-adopts
+        # pristine installs — both at launch and when `hermes update` is run
+        # on a clean-main checkout; "prompt" shows the offer once per 7 days;
+        # "never" silences the offer entirely.
+        "adopt": "auto",
     },
 
     # Language Server Protocol — semantic diagnostics from real

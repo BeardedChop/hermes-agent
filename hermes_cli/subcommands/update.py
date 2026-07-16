@@ -79,4 +79,10 @@ def build_update_parser(subparsers, *, cmd_update: Callable) -> None:
         default=False,
         help="Force the legacy in-place update flow (autostash) instead of the worktree-based update. Use this when you want to update the current checkout directly rather than creating a new worktree.",
     )
+    update_parser.add_argument(
+        "--no-adopt",
+        action="store_true",
+        default=False,
+        help="Skip auto-adopt to managed slots. By default, 'hermes update' on a pristine clean-main checkout switches you to bundled managed slots. Use --no-adopt to keep the legacy git-pull flow.",
+    )
     update_parser.set_defaults(func=cmd_update)
