@@ -1,8 +1,10 @@
 mod cli;
 mod launch;
 mod release;
+mod slots;
 mod tree;
 
+use anyhow::Context;
 use cli::Command;
 
 fn main() -> anyhow::Result<()> {
@@ -52,11 +54,39 @@ fn apply(
 }
 
 fn rollback() -> anyhow::Result<()> {
-    todo!("rollback: rewrite current.txt from previous.txt (task 1.4)")
+    let hermes_home = dirs::home_dir()
+        .context("cannot find home directory")?
+        .join(".hermes");
+    let version = slots::rollback(&hermes_home)?;
+    println!("Rolled back to {}", version);
+    Ok(())
 }
 
-fn status(_check: bool, _json: bool) -> anyhow::Result<()> {
-    println!("hermes-updater 0.1.0 (stub — task 1.4 implements status)");
+fn status(check: bool, json: bool) -> anyhow::Result<()> {
+    let hermes_home = dirs::home_dir()
+        .context("cannot find home directory")?
+        .join(".hermes");
+    let current = slots::resolve_current(&hermes_home).unwrap_or(None);
+    let previous = slots::resolve_previous(&hermes_home).unwrap_or(None);
+
+    if json {
+        let status = serde_json::json!({
+            "current": current,
+            "previous": previous,
+            "check": check,
+        });
+        println!("{}", serde_json::to_string_pretty(&status).unwrap());
+    } else {
+        println!("hermes-updater 0.1.0");
+        match current {
+            Some(v) => println!("  current:  {}", v),
+            None => println!("  current:  (none)"),
+        }
+        match previous {
+            Some(v) => println!("  previous: {}", v),
+            None => println!("  previous: (none)"),
+        }
+    }
     Ok(())
 }
 

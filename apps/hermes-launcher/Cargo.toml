@@ -46,8 +46,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Paths
 dirs = "5"
 
-# Platform (Windows process handling)
-[target.'cfg(windows)'.dependencies]
+# Platform (POSIX fsync, signals)
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["fs"] }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_Threading",
