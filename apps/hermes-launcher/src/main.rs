@@ -2,6 +2,7 @@ mod cli;
 mod launch;
 mod release;
 mod selfupdate;
+mod services;
 mod slots;
 mod tree;
 

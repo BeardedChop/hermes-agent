@@ -46,9 +46,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Paths
 dirs = "5"
 
-# Platform (POSIX fsync, signals)
+# Platform (POSIX fsync, signals, kill)
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["fs"] }
+libc = "0.2"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_Threading",
