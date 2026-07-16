@@ -57,6 +57,7 @@ export PIP_FIND_LINKS="$WHEELS"
 export PIP_NO_INDEX=1
 export UV_FIND_LINKS="$WHEELS"
 export UV_NO_INDEX=1
+SYSTEM_PYTHON=$(command -v python3)
 "$V1/bin/python" - <<'PY'
 from tools.lazy_deps import ensure
 ensure('tts.edge', prompt=False)
@@ -68,7 +69,9 @@ if "$V2/bin/python" -c 'import edge_tts' 2>/dev/null; then
     echo 'replacement venv unexpectedly already contains the feature' >&2
     exit 1
 fi
-PYTHONPATH="$REPO_ROOT" python3 - "$V2/bin/python" <<'PY'
+# Hide uv for replay so ensure() exercises the target venv's pip/ensurepip
+# ladder. This avoids CI project-environment discovery influencing the test.
+PATH=/usr/bin:/bin PYTHONPATH="$REPO_ROOT" "$SYSTEM_PYTHON" - "$V2/bin/python" <<'PY'
 import json
 import sys
 from tools.lazy_deps import apply_ledger

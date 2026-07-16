@@ -281,7 +281,9 @@ jobs:
 
           $env:HERMES_HOME = Join-Path $env:RUNNER_TEMP hermes-home
           $bootstrap = Get-Item dist/hermes-updater-win-x64.exe
-          & $bootstrap.FullName install --source "file:///$($source -replace '\\','/')" --channel stable
+          $canonicalBootstrap = Join-Path $env:RUNNER_TEMP hermes-updater.exe
+          Copy-Item $bootstrap.FullName $canonicalBootstrap
+          & $canonicalBootstrap install --source "file:///$($source -replace '\\','/')" --channel stable
           if ((Get-Content "$env:HERMES_HOME/current.txt").Trim() -ne $version) { throw 'current.txt mismatch' }
           & "$env:HERMES_HOME/bin/hermes.exe" --global --version
           & "$env:HERMES_HOME/bin/hermes-updater.exe" status --json | ConvertFrom-Json | Out-Null

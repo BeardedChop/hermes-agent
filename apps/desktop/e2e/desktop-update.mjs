@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -71,7 +71,19 @@ try {
   const v1Exited = new Promise(resolve => v1.once('exit', resolve))
   v1.kill('SIGKILL')
   await v1Exited
-  spawnSync('pkill', ['-KILL', '-f', v1Executable], { stdio: 'ignore' })
+  // Electron may leave renderer children. Reap only processes whose actual
+  // executable is v1; command-line matching would also kill the updater
+  // because --relaunch-app contains the v1 path.
+  for (const entry of fs.readdirSync('/proc')) {
+    if (!/^\d+$/.test(entry)) continue
+    try {
+      if (fs.realpathSync(`/proc/${entry}/exe`) === fs.realpathSync(v1Executable)) {
+        process.kill(Number(entry), 'SIGKILL')
+      }
+    } catch {
+      // Process exited between enumeration and inspection.
+    }
+  }
 
   await poll(
     () => fs.readFileSync(path.join(hermesHome, 'current.txt'), 'utf8').trim(),
