@@ -38,7 +38,11 @@ pub fn hop(bundle_dir: &Path, original_argv: &[String]) -> Result<()> {
     }
 
     // Extract the new updater binary from the bundle
-    let bundle_binary = bundle_dir.join("bin").join("hermes");
+    let bundle_binary = bundle_dir.join("bin").join(if cfg!(windows) {
+        "hermes.exe"
+    } else {
+        "hermes"
+    });
     if !bundle_binary.exists() {
         bail!(
             "cannot hop: bundle binary not found at {}",

@@ -68,6 +68,9 @@ jobs:
         with:
           python-version: "3.12"  # for running write-manifest.py; the bundle uses its own 3.11
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+
       - name: Install uv
         shell: bash
         run: |
@@ -129,9 +132,13 @@ jobs:
         shell: bash
         run: |
           set -e
-          # Verify the bundle's venv has core imports
-          dist/bundle/bin/hermes --version || true  # may fail if no terminal
-          dist/bundle/runtime/venv/bin/python -c "import hermes_cli, run_agent, model_tools; print('SMOKE_TEST_OK')"
+          if [[ "${{ matrix.os }}" == "win" ]]; then
+            dist/bundle/bin/hermes.exe --version
+            dist/bundle/runtime/venv/Scripts/python.exe -c "import hermes_cli, run_agent, model_tools; print('SMOKE_TEST_OK')"
+          else
+            dist/bundle/bin/hermes --version
+            dist/bundle/runtime/venv/bin/python -c "import hermes_cli, run_agent, model_tools; print('SMOKE_TEST_OK')"
+          fi
 
       - name: Smoke test — manifest verifies
         shell: bash

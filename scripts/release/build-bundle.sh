@@ -262,21 +262,20 @@ else
     echo "==> Skipping desktop build (--no-desktop or no apps/desktop)"
 fi
 
-# ─── bin/hermes — placeholder launcher shim ────────────────────────────
+# ─── bin/hermes — native launcher + updater ────────────────────────────
 
-echo "==> Creating bin/hermes launcher shim..."
+echo "==> Building native hermes launcher..."
 mkdir -p "$OUT_DIR/bin"
-cat > "$OUT_DIR/bin/hermes" << 'STUB'
-#!/bin/sh
-# Phase 0 placeholder launcher shim.
-# Phase 1 replaces this with the native Rust launcher binary.
-# This shim execs the venv python, which knows about site-packages.
-# The venv's bin/python is a relative symlink to the bundle's CPython
-# (made relative by build-bundle.sh's post-venv fixup).
-DIR="$(cd "$(dirname "$0")" && pwd)"
-exec "$DIR/../runtime/venv/bin/python" -m hermes_cli.main "$@"
-STUB
-chmod +x "$OUT_DIR/bin/hermes"
+LAUNCHER_DIR="$REPO_ROOT/apps/hermes-launcher"
+(cd "$LAUNCHER_DIR" && cargo build --release --locked)
+if [ -f "$LAUNCHER_DIR/target/release/hermes.exe" ]; then
+    cp "$LAUNCHER_DIR/target/release/hermes.exe" "$OUT_DIR/bin/hermes.exe"
+    BUNDLE_LAUNCHER="$OUT_DIR/bin/hermes.exe"
+else
+    cp "$LAUNCHER_DIR/target/release/hermes" "$OUT_DIR/bin/hermes"
+    chmod +x "$OUT_DIR/bin/hermes"
+    BUNDLE_LAUNCHER="$OUT_DIR/bin/hermes"
+fi
 
 # ─── Summary ──────────────────────────────────────────────────────────
 
@@ -287,11 +286,10 @@ echo ""
 
 # Verify the bundle boots
 echo "==> Verifying bundle..."
-"$OUT_DIR/bin/hermes" --version 2>/dev/null && echo "    PASS: bin/hermes --version" || \
-    echo "    WARN: bin/hermes --version failed (may need manifest.json from task 0.4)"
+"$BUNDLE_LAUNCHER" --version
+echo "    PASS: native launcher --version"
 
-"$VENV_PYTHON" -c "import hermes_cli, run_agent, model_tools; print('    PASS: core imports')" 2>/dev/null || \
-    echo "    WARN: core import check failed"
+"$VENV_PYTHON" -c "import hermes_cli, run_agent, model_tools; print('    PASS: core imports')"
 
 echo ""
 echo "==> Done. Next: run scripts/release/write-manifest.py to add manifest.json"
