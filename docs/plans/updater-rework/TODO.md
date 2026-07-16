@@ -29,6 +29,7 @@ This is an implementation checklist, not a record that the phases are complete. 
 
 - [x] Establish one explicit bootstrap trust root.
   - Rust updater's public key now embedded in-repo via `include_str!("keys/hermes-release.pub")` as primary trust root; `HERMES_RELEASE_PUBLIC_KEY` remains as CI/testing override.
+  - Canonical release source embedded at compile time via `HERMES_RELEASE_SOURCE` (defaults to official GitHub releases URL); `--source` override prints a scary warning when it differs from the embedded default.
   - `http://` release sources now rejected by `ReleaseSource::parse()` — only `https://` and `file://` accepted.
   - Install scripts/adopt.py still trust exe+checksum from same origin (documented design limitation — the updater's signature verification is the real trust boundary once a trusted updater is installed).
   - Spec: `02-phase1-updater.md:115-125`; `03-phase2-compat-and-adoption.md:172-180`.
