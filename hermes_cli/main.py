@@ -2023,6 +2023,15 @@ def _launch_tui(
     accept_hooks: bool = False,
 ):
     """Replace current process with the TUI."""
+    # ── Launch-time staleness refusal (phase 3, task 3.3) ────────────
+    # In a checkout, refuse when the TUI dist is stale.  --tui-dev (tsx)
+    # bypasses the check because it runs TypeScript sources directly.
+    _check_surface_staleness(
+        "tui",
+        lambda: _tui_stamp_for_check(PROJECT_ROOT),
+        skip_build=tui_dev,
+    )
+
     tui_dir = PROJECT_ROOT / "ui-tui"
 
     import tempfile
@@ -5639,12 +5648,137 @@ def _desktop_launch_options() -> tuple[list[str], str]:
     return flags, disable_gpu
 
 
+# ---------------------------------------------------------------------------
+# Launch-time staleness refusal (phase 3, task 3.3)
+#
+# In a checkout, launching an app surface (desktop / TUI / web) checks the
+# relevant ArtifactStamp from dev_sync.  When the build is stale or missing,
+# the launch is refused with instructions instead of surprise-building.
+# In a slot (managed bundle), no check runs — bundle artifacts are always
+# current by construction.
+# ---------------------------------------------------------------------------
+
+def _stamp_relative_time(stamp_file: Path) -> str:
+    """Return a human-friendly relative time for the stamp's builtAt field.
+
+    Reads the ``builtAt`` ISO-8601 timestamp from *stamp_file* and returns
+    a short string like ``"2 hours ago"`` or ``"never"`` when the stamp
+    is missing or unreadable.
+    """
+    try:
+        data = json.loads(stamp_file.read_text(encoding="utf-8"))
+        built_at = data.get("builtAt", "")
+        if not built_at:
+            return "never"
+        from datetime import datetime, timezone
+
+        dt = datetime.fromisoformat(built_at)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        delta = now - dt
+        seconds = int(delta.total_seconds())
+        if seconds < 0:
+            return "just now"
+        if seconds < 60:
+            return f"{seconds}s ago"
+        if seconds < 3600:
+            return f"{seconds // 60}m ago"
+        if seconds < 86400:
+            return f"{seconds // 3600}h ago"
+        return f"{seconds // 86400}d ago"
+    except Exception:
+        return "never"
+
+
+def _check_surface_staleness(
+    surface: str,
+    stamp_factory,
+    *,
+    skip_build: bool = False,
+) -> None:
+    """Refuse to launch *surface* when the build is stale (exit 4).
+
+    Parameters
+    ----------
+    surface
+        Human-readable surface name for the message (``"desktop"``,
+        ``"tui"``, ``"web"``).
+    stamp_factory
+        Callable that returns an :class:`~hermes_cli.dev_sync.ArtifactStamp`
+        for this surface, given the current ``PROJECT_ROOT``.  In tests
+        this is mocked.
+    skip_build
+        When True (``--build`` / ``--skip-build`` / ``--force-build`` /
+        ``--tui-dev``), the check is bypassed — the caller is explicitly
+        opting into a build-then-launch or already-managed path.
+
+    In a **slot** (has ``manifest.json``), the check is skipped entirely.
+    """
+    # Slots: bundle artifacts are always current by construction.
+    if (PROJECT_ROOT / "manifest.json").is_file():
+        return
+
+    # Caller asked to build / skip the check.
+    if skip_build:
+        return
+
+    stamp = stamp_factory()
+    if not stamp.needs_build():
+        return  # Fresh — launch normally.
+
+    rel_time = _stamp_relative_time(stamp.stamp_file)
+    print(
+        f"{surface} build is behind the source tree (last built {rel_time}).\n"
+        f"  run: hermes dev sync            # rebuild what changed\n"
+        f"  or:  hermes {surface} --build     # build now and launch"
+    )
+    sys.exit(4)
+
+
+def _desktop_stamp_for_check(tree_root: Path):
+    """Return the dev_sync ArtifactStamp for the desktop surface."""
+    from hermes_cli.dev_sync import _desktop_stamp
+
+    return _desktop_stamp(tree_root)
+
+
+def _tui_stamp_for_check(tree_root: Path):
+    """Return the dev_sync ArtifactStamp for the TUI surface."""
+    from hermes_cli.dev_sync import _tui_stamp
+
+    return _tui_stamp(tree_root)
+
+
+def _web_stamp_for_check(tree_root: Path):
+    """Return the dev_sync ArtifactStamp for the web surface."""
+    from hermes_cli.dev_sync import _web_stamp
+
+    return _web_stamp(tree_root)
+
+
 def cmd_gui(args: argparse.Namespace):
     """Build and launch the native Electron desktop GUI."""
     desktop_dir = PROJECT_ROOT / "apps" / "desktop"
     if not (desktop_dir / "package.json").exists():
         print(f"Desktop GUI source not found at: {desktop_dir}")
         sys.exit(1)
+
+    # ── Launch-time staleness refusal (phase 3, task 3.3) ────────────
+    # In a checkout, refuse with instructions when the desktop build is
+    # stale or missing — instead of surprise-building.  --build /
+    # --skip-build / --force-build / --build-only all bypass the check.
+    _check_surface_staleness(
+        "desktop",
+        lambda: _desktop_stamp_for_check(PROJECT_ROOT),
+        skip_build=(
+            getattr(args, "build", False)
+            or getattr(args, "skip_build", False)
+            or getattr(args, "force_build", False)
+            or getattr(args, "build_only", False)
+            or getattr(args, "source", False)
+        ),
+    )
 
     try:
         from hermes_logging import setup_logging as _setup_logging_gui
@@ -9614,6 +9748,33 @@ def _cmd_update_impl(args, gateway_mode: bool):
                 print(_format_concurrent_instances_message(concurrent, scripts_dir))
                 sys.exit(2)
 
+    # Worktree-based update for ejected/dev checkouts with dirty trees.
+    # When the tree is a checkout (not a slot) and git worktree is viable,
+    # route to the worktree-based flow instead of the legacy autostash dance.
+    # --in-place forces the legacy flow.
+    _in_place = bool(getattr(args, "in_place", False))
+    if not _in_place and git_dir.exists():
+        from hermes_cli.dev_update import should_use_worktree_update, run_dev_update
+
+        if should_use_worktree_update(PROJECT_ROOT, in_place=False):
+            _branch = _resolve_update_branch(args)
+            _result = run_dev_update(
+                PROJECT_ROOT,
+                _branch,
+                in_place=False,
+                input_fn=gw_input_fn,
+            )
+            if _result.success:
+                _invalidate_update_cache()
+                return
+            if _result.fell_back:
+                # Worktree creation failed — fall through to the legacy
+                # autostash flow below (don't return).
+                print("→ Continuing with legacy in-place update...")
+            else:
+                # Cancelled or merge conflict — stop here.
+                return
+
     # Pre-update backup — runs before any git/file mutation so users can
     # always roll back to the exact state they had before this update.
     _run_pre_update_backup(args)
@@ -12130,6 +12291,21 @@ def cmd_dashboard(args):
     # ready sentinel. Resolved once and threaded through the re-exec, the
     # build gate, and start_server.
     _headless_backend = getattr(args, "headless_backend", False)
+
+    # ── Launch-time staleness refusal (phase 3, task 3.3) ────────────
+    # In a checkout, refuse when the web dist is stale.  Skipped for:
+    #   - headless `serve` (no SPA)
+    #   - --skip-build (caller manages the build)
+    #   - HERMES_WEB_DIST set (caller-provided dist)
+    _check_surface_staleness(
+        "web",
+        lambda: _web_stamp_for_check(PROJECT_ROOT),
+        skip_build=(
+            _headless_backend
+            or getattr(args, "skip_build", False)
+            or "HERMES_WEB_DIST" in os.environ
+        ),
+    )
 
     # ── Unified profile launch routing ────────────────────────────────
     # The dashboard is a MACHINE management surface: it can read/write any
