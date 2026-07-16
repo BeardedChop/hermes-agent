@@ -11435,9 +11435,14 @@ def main():
     # before heavy imports so a stale venv doesn't prevent the offer.
     try:
         from hermes_constants import get_hermes_home
-        from hermes_cli.adoption_offer import offer_adoption
+        from hermes_cli.adoption_offer import configured_adopt_mode, offer_adoption
         home = get_hermes_home()
-        offer_adoption(home, PROJECT_ROOT, adopt_mode="prompt", is_interactive=bool(sys.stdin.isatty()))
+        offer_adoption(
+            home,
+            PROJECT_ROOT,
+            adopt_mode=configured_adopt_mode(),
+            is_interactive=bool(sys.stdin.isatty()),
+        )
     except Exception:
         pass
 

@@ -18,6 +18,7 @@ from hermes_cli.adoption_offer import (
     _mark_shown,
     ADOPT_PROMPT_COPY,
     SNOOZE_SECONDS,
+    configured_adopt_mode,
 )
 
 
@@ -94,6 +95,22 @@ class TestShouldOffer:
     def test_detection_failure_returns_false(self, hermes_home, project_root):
         with patch("hermes_cli.adoption.detect_legacy_install", side_effect=Exception("boom")):
             assert not should_offer(hermes_home, project_root, adopt_mode="prompt")
+
+
+class TestConfiguredAdoptMode:
+    def test_reads_updates_adopt_from_config(self):
+        with patch(
+            "hermes_cli.config.load_config",
+            return_value={"updates": {"adopt": "never"}},
+        ):
+            assert configured_adopt_mode() == "never"
+
+    def test_invalid_value_falls_back_to_prompt(self):
+        with patch(
+            "hermes_cli.config.load_config",
+            return_value={"updates": {"adopt": "surprise"}},
+        ):
+            assert configured_adopt_mode() == "prompt"
 
 
 class TestOfferAdoption:

@@ -162,16 +162,17 @@ pub fn verify_bundle(bundle_dir: &Path, expected_pubkey: Option<&str>) -> Result
         );
     }
 
-    // Verify signature if present
-    if sig_path.exists() {
-        let sig_bytes = std::fs::read(&sig_path)
-            .with_context(|| format!("cannot read {}", sig_path.display()))?;
-        let sig: Signature =
-            serde_json::from_slice(&sig_bytes).context("failed to parse manifest.json.sig")?;
-
-        let pubkey = expected_pubkey.unwrap_or(&sig.pubkey);
-        verify_ed25519(&manifest_bytes, &sig.signature, pubkey)?;
+    if !sig_path.exists() {
+        bail!("bundle signature is missing: {}", sig_path.display());
     }
+    let sig_bytes =
+        std::fs::read(&sig_path).with_context(|| format!("cannot read {}", sig_path.display()))?;
+    let sig: Signature =
+        serde_json::from_slice(&sig_bytes).context("failed to parse manifest.json.sig")?;
+
+    let pubkey = expected_pubkey
+        .ok_or_else(|| anyhow::anyhow!("no trusted release public key was provided"))?;
+    verify_ed25519(&manifest_bytes, &sig.signature, pubkey)?;
 
     // Verify file hashes
     verify_file_hashes(bundle_dir, &manifest)?;
@@ -407,13 +408,13 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_clean_bundle() {
+    fn test_verify_unsigned_bundle_is_rejected() {
         let tmp = tempfile::tempdir().unwrap();
         make_bundle_fixture(tmp.path());
         write_manifest(tmp.path());
-        let manifest = verify_bundle(tmp.path(), None).unwrap();
-        assert_eq!(manifest.schema, 1);
-        assert_eq!(manifest.version, "2026.07.15");
+        let result = verify_bundle(tmp.path(), None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("signature"));
     }
 
     #[test]
@@ -421,9 +422,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         make_bundle_fixture(tmp.path());
         write_manifest(tmp.path());
+        let (pubkey, _) = sign_manifest(tmp.path());
         // Tamper with a file
         std::fs::write(tmp.path().join("app/run_agent.py"), "# TAMPERED\n").unwrap();
-        let result = verify_bundle(tmp.path(), None);
+        let result = verify_bundle(tmp.path(), Some(&pubkey));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("tampered"));
@@ -434,8 +436,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         make_bundle_fixture(tmp.path());
         write_manifest(tmp.path());
+        let (pubkey, _) = sign_manifest(tmp.path());
         std::fs::remove_file(tmp.path().join("app/run_agent.py")).unwrap();
-        let result = verify_bundle(tmp.path(), None);
+        let result = verify_bundle(tmp.path(), Some(&pubkey));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("missing"));
@@ -446,8 +449,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         make_bundle_fixture(tmp.path());
         write_manifest(tmp.path());
+        let (pubkey, _) = sign_manifest(tmp.path());
         std::fs::write(tmp.path().join("evil.py"), "# evil").unwrap();
-        let result = verify_bundle(tmp.path(), None);
+        let result = verify_bundle(tmp.path(), Some(&pubkey));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("extra"));

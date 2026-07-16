@@ -143,6 +143,25 @@ class TestPreflightBrokenArtifactRoot:
         assert skills_entry.get("ok") is False
         assert "empty" in skills_entry.get("error", "").lower()
 
+    def test_desktop_absence_does_not_skip_tui(self, tmp_path):
+        manifest = {"desktop": False}
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+        skills = tmp_path / "skills"
+        web = tmp_path / "web"
+        tui = tmp_path / "tui"
+        for directory in (skills, web, tui):
+            directory.mkdir()
+            (directory / "artifact").write_text("ok")
+
+        with patch("hermes_constants.get_artifact_root", lambda: tmp_path), patch(
+            "hermes_constants.bundled_skills_dir", lambda: skills
+        ), patch("hermes_constants.web_dist_dir", lambda: web), patch(
+            "hermes_constants.tui_dist_dir", lambda: tui
+        ):
+            _, report = preflight()
+
+        assert report["artifact_roots"]["roots"]["tui_dist_dir"]["ok"] is True
+
 
 class TestRunPreflightCli:
     """The CLI entrypoint prints JSON and exits 0/1."""

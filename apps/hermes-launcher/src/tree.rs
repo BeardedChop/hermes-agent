@@ -43,6 +43,24 @@ pub fn resolve_tree_root(exe_path: &Path) -> anyhow::Result<ResolvedTree> {
         .ok_or_else(|| anyhow::anyhow!("cannot get parent of exe path"))?;
 
     for dir in start.ancestors() {
+        // Managed root: the stable launcher lives under <home>/bin and
+        // resolves current.txt to a concrete immutable slot.
+        if dir.join("current.txt").is_file() {
+            let version = crate::slots::resolve_current(dir)?
+                .ok_or_else(|| anyhow::anyhow!("managed current.txt is empty"))?;
+            let slot = crate::slots::slot_path(dir, &version);
+            if !slot.join("manifest.json").is_file() {
+                return Err(anyhow::anyhow!(
+                    "managed current slot has no manifest.json: {}",
+                    slot.display()
+                ));
+            }
+            return Ok(ResolvedTree {
+                root: slot,
+                kind: TreeKind::Slot,
+            });
+        }
+
         // Slot: manifest.json present
         if dir.join("manifest.json").is_file() {
             return Ok(ResolvedTree {

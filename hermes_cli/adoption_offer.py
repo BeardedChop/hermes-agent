@@ -28,6 +28,17 @@ ADOPT_PROMPT_COPY = """⚕ Hermes can switch this install to managed releases (f
   (configure: updates.adopt = auto|prompt|never)"""
 
 
+def configured_adopt_mode() -> str:
+    """Read the configured launch-time adoption policy, fail-safe to prompt."""
+    try:
+        from hermes_cli.config import load_config
+
+        mode = str((load_config().get("updates") or {}).get("adopt", "prompt"))
+    except Exception:
+        return "prompt"
+    return mode if mode in {"auto", "prompt", "never"} else "prompt"
+
+
 def _snooze_path(hermes_home: Path) -> Path:
     """Path to the adoption snooze stamp."""
     state_dir = hermes_home / "state"

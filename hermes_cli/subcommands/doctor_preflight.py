@@ -160,19 +160,10 @@ def _check_artifact_roots() -> dict[str, Any]:
         result["error"] = f"get_artifact_root: {type(exc).__name__}: {exc}"
         return result
 
-    # Determine which components to skip based on the manifest.
-    # The manifest lives at the artifact root in a slot; in a checkout there
-    # is no manifest so all accessors are checked.
+    # These accessors represent required core bundle components. The
+    # manifest's ``desktop`` flag only describes the optional Electron app;
+    # it must never suppress TUI or web validation.
     skip: set[str] = set()
-    manifest_path = root / "manifest.json"
-    if manifest_path.is_file():
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if manifest.get("desktop") is False:
-                skip.add("tui_dist_dir")
-        except Exception:
-            # If we can't read the manifest, check everything — better safe.
-            pass
 
     # Each accessor: (name, callable, human label)
     accessors = [

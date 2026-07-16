@@ -46,14 +46,15 @@ pub enum Command {
     },
 
     /// Apply an update: download, verify, stage, preflight, flip.
+    #[command(disable_version_flag = true)]
     Apply {
         /// Release source URL (https:// or file://).
         #[arg(long)]
         source: Option<String>,
 
         /// Specific version to apply (defaults to latest).
-        #[arg(long)]
-        version: Option<String>,
+        #[arg(long = "version")]
+        target_version: Option<String>,
 
         /// Notify a file when done (gateway IPC).
         #[arg(long)]

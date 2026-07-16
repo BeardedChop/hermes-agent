@@ -1,4 +1,5 @@
 mod adopt;
+mod apply;
 mod cli;
 mod cwd_guard;
 mod launch;
@@ -10,6 +11,16 @@ mod tree;
 
 use anyhow::Context;
 use cli::Command;
+use std::path::PathBuf;
+
+fn hermes_home() -> anyhow::Result<PathBuf> {
+    if let Some(path) = std::env::var_os("HERMES_HOME") {
+        return Ok(PathBuf::from(path));
+    }
+    Ok(dirs::home_dir()
+        .context("cannot find home directory")?
+        .join(".hermes"))
+}
 
 fn main() -> anyhow::Result<()> {
     let cli = cli::parse();
@@ -19,11 +30,11 @@ fn main() -> anyhow::Result<()> {
         Some(Command::Install { source, channel }) => install(source, channel),
         Some(Command::Apply {
             source,
-            version,
+            target_version,
             notify_file,
             relaunch_app,
             report,
-        }) => apply(source, version, notify_file, relaunch_app, report),
+        }) => apply(source, target_version, notify_file, relaunch_app, report),
         Some(Command::Rollback) => rollback(),
         Some(Command::Status { check, json }) => status(check, json),
         Some(Command::Adopt {
@@ -43,42 +54,85 @@ fn launch(args: Vec<String>) -> anyhow::Result<()> {
     launch::launch(args)
 }
 
-fn install(_source: Option<String>, _channel: String) -> anyhow::Result<()> {
-    todo!("install: download → verify → stage → preflight → flip (task 1.4)")
+fn trusted_release_pubkey() -> anyhow::Result<&'static str> {
+    option_env!("HERMES_RELEASE_PUBLIC_KEY")
+        .filter(|key| !key.trim().is_empty())
+        .map(str::trim)
+        .ok_or_else(|| {
+            anyhow::anyhow!("this updater was built without the Hermes release public key")
+        })
+}
+
+fn release_source(source: Option<String>) -> anyhow::Result<release::ReleaseSource> {
+    release::ReleaseSource::parse(
+        source
+            .as_deref()
+            .unwrap_or("https://github.com/NousResearch/hermes-agent/releases/download"),
+    )
+}
+
+fn install(source: Option<String>, channel: String) -> anyhow::Result<()> {
+    let home = hermes_home()?;
+    let source = release_source(source)?;
+    let manifest = apply::apply_release(apply::ApplyRequest {
+        hermes_home: &home,
+        source: &source,
+        version: None,
+        channel: &channel,
+        trusted_pubkey: trusted_release_pubkey()?,
+    })?;
+    let _marker = apply::UpdateMarker::acquire(&home)?;
+    apply::activate_stable_launchers(&home, &manifest.version)?;
+    println!("Installed Hermes {}", manifest.version);
+    Ok(())
 }
 
 fn apply(
-    _source: Option<String>,
-    _version: Option<String>,
-    _notify_file: Option<String>,
-    _relaunch_app: Option<String>,
+    source: Option<String>,
+    version: Option<String>,
+    notify_file: Option<String>,
+    relaunch_app: Option<String>,
     _report: String,
 ) -> anyhow::Result<()> {
-    // The full apply pipeline: download → verify → stage → preflight → flip
-    // → restage → restart services. Individual pieces are in slots.rs,
-    // release.rs, selfupdate.rs, services.rs. The orchestration is wired
-    // when the apply verb is fully implemented.
-    //
-    // Post-flip ledger application (task 5.2): after the flip commits and
-    // before restarting services, run the ledger against the NEW slot:
-    //   <new slot>/bin/hermes features apply-ledger --json
-    // Failures are warnings (never fail the flip for a feature install).
-    todo!("apply: download → verify → stage → preflight → flip → restage (task 1.4)")
+    let home = hermes_home()?;
+    let source = release_source(source)?;
+    let manifest = apply::apply_release(apply::ApplyRequest {
+        hermes_home: &home,
+        source: &source,
+        version: version.as_deref(),
+        channel: "stable",
+        trusted_pubkey: trusted_release_pubkey()?,
+    })?;
+    let _marker = apply::UpdateMarker::acquire(&home)?;
+    apply::activate_stable_launchers(&home, &manifest.version)?;
+    if let Err(error) = apply::apply_feature_ledger(&home, &manifest.version) {
+        eprintln!("warning: feature ledger application failed: {error:#}");
+    }
+    if let Err(error) = services::restart_gateway(&home) {
+        eprintln!("warning: gateway restart failed: {error:#}");
+    }
+    services::write_notify_files(
+        &home,
+        0,
+        &format!("Updated Hermes to {}", manifest.version),
+        notify_file.as_deref(),
+    )?;
+    if let Some(executable) = relaunch_app {
+        std::process::Command::new(executable).spawn()?;
+    }
+    println!("Updated Hermes to {}", manifest.version);
+    Ok(())
 }
 
 fn rollback() -> anyhow::Result<()> {
-    let hermes_home = dirs::home_dir()
-        .context("cannot find home directory")?
-        .join(".hermes");
+    let hermes_home = hermes_home()?;
     let version = slots::rollback(&hermes_home)?;
     println!("Rolled back to {}", version);
     Ok(())
 }
 
 fn status(check: bool, json: bool) -> anyhow::Result<()> {
-    let hermes_home = dirs::home_dir()
-        .context("cannot find home directory")?
-        .join(".hermes");
+    let hermes_home = hermes_home()?;
     let current = slots::resolve_current(&hermes_home).unwrap_or(None);
     let previous = slots::resolve_previous(&hermes_home).unwrap_or(None);
 
@@ -104,9 +158,7 @@ fn status(check: bool, json: bool) -> anyhow::Result<()> {
 }
 
 fn adopt(from_checkout: Option<String>, source: Option<String>, undo: bool) -> anyhow::Result<()> {
-    let hermes_home = dirs::home_dir()
-        .context("cannot find home directory")?
-        .join(".hermes");
+    let hermes_home = hermes_home()?;
 
     let checkout = match from_checkout {
         Some(path) => std::path::PathBuf::from(path),
@@ -120,12 +172,42 @@ fn adopt(from_checkout: Option<String>, source: Option<String>, undo: bool) -> a
 }
 
 fn self_restage() -> anyhow::Result<()> {
-    todo!("self-restage: wire to selfupdate::self_restage (task 1.6 impl done, wiring in task 1.4's apply flow)")
+    let home = hermes_home()?;
+    let version =
+        slots::resolve_current(&home)?.ok_or_else(|| anyhow::anyhow!("no current managed slot"))?;
+    apply::activate_stable_launchers(&home, &version)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+
+    struct EnvRestore {
+        key: &'static str,
+        value: Option<OsString>,
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            match &self.value {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[test]
+    fn hermes_home_honors_environment_override() {
+        let _restore = EnvRestore {
+            key: "HERMES_HOME",
+            value: std::env::var_os("HERMES_HOME"),
+        };
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("HERMES_HOME", temp.path());
+
+        assert_eq!(hermes_home().unwrap(), temp.path());
+    }
 
     #[test]
     fn test_status_works() {
