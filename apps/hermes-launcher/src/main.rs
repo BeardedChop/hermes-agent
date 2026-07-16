@@ -323,6 +323,10 @@ fn apply(
 ) -> anyhow::Result<()> {
     let home = hermes_home()?;
     let source = release_source(source)?;
+    // Acquire the update marker BEFORE apply_release so the entire
+    // download→verify→stage→preflight→commit→flip→restart→notify
+    // critical section is mutually exclusive.
+    let _marker = apply::UpdateMarker::acquire(&home)?;
     let manifest = apply::apply_release(apply::ApplyRequest {
         hermes_home: &home,
         source: &source,
@@ -330,7 +334,6 @@ fn apply(
         channel: "stable",
         trusted_pubkey: trusted_release_pubkey()?,
     })?;
-    let _marker = apply::UpdateMarker::acquire(&home)?;
     apply::activate_stable_launchers(&home, &manifest.version)?;
     if let Err(error) = apply::apply_feature_ledger(&home, &manifest.version) {
         eprintln!("warning: feature ledger application failed: {error:#}");

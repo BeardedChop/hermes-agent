@@ -147,20 +147,144 @@ fn replace_binary(source: &Path, destination: &Path) -> Result<()> {
         .with_context(|| format!("cannot activate {}", destination.display()))
 }
 
+#[derive(Debug)]
 pub struct UpdateMarker {
     path: PathBuf,
 }
 
+/// How old (in seconds) before a marker is considered stale and reclaimable.
+const STALE_MARKER_AGE_SECS: u64 = 600; // 10 minutes
+
 impl UpdateMarker {
+    /// Acquire the update-in-progress marker with real mutual exclusion.
+    ///
+    /// Uses atomic create-new (`O_CREAT | O_EXCL`) so only one process can
+    /// create the file. If it already exists, checks the owner PID and age:
+    /// if the PID is dead or the marker is older than STALE_MARKER_AGE_SECS,
+    /// reclaims it. Otherwise returns an error.
+    ///
+    /// The marker is held until the `UpdateMarker` is dropped, so it should
+    /// be acquired BEFORE the commit point and held through flip/restart/notify.
     pub fn acquire(hermes_home: &Path) -> Result<Self> {
+        use std::io;
         use std::time::{SystemTime, UNIX_EPOCH};
+
         let path = hermes_home.join(".hermes-update-in-progress");
-        let started_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .context("system clock is before UNIX epoch")?
-            .as_secs();
-        fs::write(&path, format!("{}\n{}\n", std::process::id(), started_at))?;
-        Ok(Self { path })
+
+        loop {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .context("system clock is before UNIX epoch")?
+                .as_secs();
+
+            // Try atomic create-new: succeeds only if the file doesn't exist.
+            let result = {
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create_new(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    opts.mode(0o644);
+                }
+                opts.open(&path)
+            };
+
+            match result {
+                Ok(mut file) => {
+                    use std::io::Write;
+                    write!(file, "{}\n{}\n", std::process::id(), now)
+                        .context("cannot write update marker")?;
+                    return Ok(Self { path });
+                }
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                    // Marker exists — check if it's stale.
+                    match Self::check_stale(&path, now) {
+                        Ok(true) => {
+                            // Stale — remove and retry.
+                            let _ = std::fs::remove_file(&path);
+                            continue;
+                        }
+                        Ok(false) => {
+                            // Active — refuse.
+                            let contents = std::fs::read_to_string(&path)
+                                .unwrap_or_default();
+                            let pid = contents.lines().next().unwrap_or("?");
+                            bail!(
+                                "another update is in progress (pid: {}). \
+                                 Wait for it to finish or remove {} if stale.",
+                                pid,
+                                path.display()
+                            );
+                        }
+                        Err(_) => {
+                            // Can't read — treat as stale and retry.
+                            let _ = std::fs::remove_file(&path);
+                            continue;
+                        }
+                    }
+                }
+                Err(err) => {
+                    Err(err).with_context(|| {
+                        format!("cannot create update marker: {}", path.display())
+                    })?;
+                }
+            }
+        }
+    }
+
+    /// Check if the marker at `path` is stale.
+    /// Returns Ok(true) if stale (PID dead or too old), Ok(false) if active.
+    fn check_stale(path: &Path, now: u64) -> Result<bool> {
+        let contents =
+            std::fs::read_to_string(path).with_context(|| {
+                format!("cannot read update marker: {}", path.display())
+            })?;
+        let mut lines = contents.lines();
+        let pid_str = lines.next().context("marker has no PID line")?;
+        let age_str = lines.next().context("marker has no timestamp line")?;
+
+        let pid: u32 = pid_str
+            .parse()
+            .context("marker PID is not a valid integer")?;
+        let started_at: u64 = age_str
+            .parse()
+            .context("marker timestamp is not a valid integer")?;
+
+        // Check age first — if the marker is too old, reclaim regardless.
+        let age = now.saturating_sub(started_at);
+        if age > STALE_MARKER_AGE_SECS {
+            return Ok(true);
+        }
+
+        // Check if the PID is still alive.
+        if !pid_is_alive(pid) {
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+}
+
+/// Check if a process is alive (cross-platform).
+fn pid_is_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // kill(pid, 0) returns 0 if the process exists, ESRCH if not.
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        let handle =
+            unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle == 0 {
+            return false;
+        }
+        unsafe { CloseHandle(handle) };
+        true
     }
 }
 
@@ -438,6 +562,30 @@ mod tests {
             assert!(fields[1].parse::<u64>().is_ok());
         }
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn update_marker_rejects_concurrent_acquisition() {
+        let home = tempfile::tempdir().unwrap();
+        let _first = UpdateMarker::acquire(home.path()).unwrap();
+        // Second acquisition must fail — the marker is held by the first.
+        let result = UpdateMarker::acquire(home.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("in progress"));
+    }
+
+    #[test]
+    fn update_marker_reclaims_stale_pid() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join(".hermes-update-in-progress");
+        // Write a marker with a dead PID (999999 is extremely unlikely to exist).
+        fs::write(&path, "999999\n1\n").unwrap();
+        // Acquisition should succeed by reclaiming the stale marker.
+        let _marker = UpdateMarker::acquire(home.path()).unwrap();
+        // The marker should now have our PID.
+        let contents = fs::read_to_string(&path).unwrap();
+        let pid: u32 = contents.lines().next().unwrap().parse().unwrap();
+        assert_eq!(pid, std::process::id());
     }
 
     #[test]
