@@ -659,18 +659,34 @@ def _desktop_packaged_exists(desktop_dir: Path) -> bool:
 
 
 def _apply_feature_ledger(tree_root: Path, report: SyncReport) -> SyncReport:
-    """Step 5: apply the feature ledger if present (phase 5; soft-import)."""
+    """Step 5: apply the feature ledger (phase 5 task 5.2).
+
+    Calls ``apply_ledger`` from ``tools.lazy_deps`` with the tree's venv
+    python. Failures are warnings (never fail the sync for a feature install).
+    """
     try:
-        from tools.lazy_deps import refresh_active_features  # noqa: F401
+        from tools.lazy_deps import apply_ledger
     except ImportError:
-        # Module absent — soft skip (phase 5 not yet implemented)
         report.skipped.append("feature ledger skipped (module absent)")
         return report
 
-    # Phase 5 will implement the actual ledger application.
-    # For now, this is a no-op placeholder that succeeds silently.
-    report.feature_ledger_applied = False
-    report.skipped.append("feature ledger not yet implemented")
+    venv_python = tree_root / ".venv" / "bin" / "python"
+    if not venv_python.exists():
+        venv_python = tree_root / "venv" / "bin" / "python"
+    if not venv_python.exists():
+        report.skipped.append("feature ledger skipped (no venv python)")
+        return report
+
+    try:
+        results = apply_ledger(str(venv_python))
+        failed = [name for name, status in results.items() if status.startswith("failed")]
+        if failed:
+            report.skipped.append(f"feature ledger: {len(failed)} failed: {', '.join(failed)}")
+        report.feature_ledger_applied = True
+    except Exception as exc:
+        report.skipped.append(f"feature ledger error: {exc}")
+        report.feature_ledger_applied = False
+
     return report
 
 

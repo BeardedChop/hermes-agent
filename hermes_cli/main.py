@@ -7783,23 +7783,13 @@ def _refresh_active_lazy_features() -> None:
         logger.debug("Lazy refresh skipped (import failed): %s", exc)
         return
 
+    # Phase 5 task 5.2: the ledger REPLACES the probe-based refresh.
+    # apply_ledger reads features.json (seeded from the venv probe on first
+    # call) and reinstalls each feature under the current pins. The symbol
+    # + signature are frozen in updater_compat.py — only internals change.
     try:
-        active = lazy_deps.active_features()
+        results = lazy_deps.apply_ledger(sys.executable)
     except Exception as exc:
-        logger.debug("Lazy refresh skipped (active_features failed): %s", exc)
-        return
-
-    if not active:
-        return
-
-    print()
-    print(f"→ Refreshing {len(active)} active lazy backend(s)...")
-
-    try:
-        results = lazy_deps.refresh_active_features(prompt=False)
-    except Exception as exc:
-        # refresh_active_features is documented as never-raise, but defend
-        # the update flow against future regressions.
         print(f"  ⚠ Lazy refresh failed unexpectedly: {exc}")
         return
 

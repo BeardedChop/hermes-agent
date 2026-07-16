@@ -54,6 +54,15 @@ fn apply(
     _relaunch_app: Option<String>,
     _report: String,
 ) -> anyhow::Result<()> {
+    // The full apply pipeline: download → verify → stage → preflight → flip
+    // → restage → restart services. Individual pieces are in slots.rs,
+    // release.rs, selfupdate.rs, services.rs. The orchestration is wired
+    // when the apply verb is fully implemented.
+    //
+    // Post-flip ledger application (task 5.2): after the flip commits and
+    // before restarting services, run the ledger against the NEW slot:
+    //   <new slot>/bin/hermes features apply-ledger --json
+    // Failures are warnings (never fail the flip for a feature install).
     todo!("apply: download → verify → stage → preflight → flip → restage (task 1.4)")
 }
 
