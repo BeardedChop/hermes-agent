@@ -1,5 +1,6 @@
 mod cli;
 mod launch;
+mod release;
 mod tree;
 
 use cli::Command;

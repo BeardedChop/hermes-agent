@@ -33,9 +33,11 @@ tokio = { version = "1", features = ["full"] }
 # Hashing (manifest verification)
 sha2 = "0.10"
 hex = "0.4"
+base64 = "0.22"
 
 # Ed25519 signature verification (manifest.json.sig)
-ed25519-dalek = "2"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
 
 # Logging
 tracing = "0.1"
