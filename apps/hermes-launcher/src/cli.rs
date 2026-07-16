@@ -43,6 +43,15 @@ pub enum Command {
         /// Release channel (stable or nightly).
         #[arg(long, default_value = "stable")]
         channel: String,
+
+        /// Clone the source repo instead of downloading a managed bundle.
+        /// Runs `hermes dev sync` after cloning to provision venv/deps/builds.
+        #[arg(long)]
+        source_mode: bool,
+
+        /// Git branch to clone (source mode only, default: main).
+        #[arg(long, default_value = "main")]
+        branch: String,
     },
 
     /// Apply an update: download, verify, stage, preflight, flip.

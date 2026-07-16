@@ -28,7 +28,12 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Some(Command::Launch { args }) => launch(args),
-        Some(Command::Install { source, channel }) => install(source, channel),
+        Some(Command::Install {
+            source,
+            channel,
+            source_mode,
+            branch,
+        }) => install(source, channel, source_mode, branch),
         Some(Command::Apply {
             source,
             target_version,
@@ -120,8 +125,18 @@ fn release_source(source: Option<String>) -> anyhow::Result<release::ReleaseSour
     )
 }
 
-fn install(source: Option<String>, channel: String) -> anyhow::Result<()> {
+fn install(
+    source: Option<String>,
+    channel: String,
+    source_mode: bool,
+    branch: String,
+) -> anyhow::Result<()> {
     let home = hermes_home()?;
+
+    if source_mode {
+        return install_source(&home, &branch);
+    }
+
     let source = release_source(source)?;
     let manifest = apply::apply_release(apply::ApplyRequest {
         hermes_home: &home,
@@ -133,6 +148,118 @@ fn install(source: Option<String>, channel: String) -> anyhow::Result<()> {
     let _marker = apply::UpdateMarker::acquire(&home)?;
     apply::activate_stable_launchers(&home, &manifest.version)?;
     println!("Installed Hermes {}", manifest.version);
+    Ok(())
+}
+
+/// Clone the source repo and provision it via `hermes dev sync`.
+fn install_source(home: &std::path::Path, branch: &str) -> anyhow::Result<()> {
+    let checkout = home.join("hermes-agent");
+
+    if checkout.join(".git").exists() {
+        anyhow::bail!(
+            "checkout already exists at {} — use `hermes update` to update it",
+            checkout.display()
+        );
+    }
+
+    std::fs::create_dir_all(home)?;
+    let repo_url = "https://github.com/NousResearch/hermes-agent.git";
+
+    println!("→ Cloning {repo_url} (branch: {branch})...");
+    let status = std::process::Command::new("git")
+        .args(["clone", "--depth", "1", "--branch", branch, repo_url])
+        .arg(&checkout)
+        .status()
+        .context("failed to run git clone")?;
+    if !status.success() {
+        anyhow::bail!("git clone failed with status {status}");
+    }
+
+    // Stamp the install method so `hermes update` knows this is a source checkout.
+    std::fs::write(checkout.join(".install_method"), "source\n")
+        .context("failed to write .install_method")?;
+
+    // Wire the command link: hermes → checkout's bin/hermes (if it exists)
+    // or fall back to the venv python entry point after dev sync.
+    let bin_dir = home.join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let launcher = checkout.join("bin").join("hermes");
+    let link = bin_dir.join("hermes");
+    let _ = std::fs::remove_file(&link);
+    #[cfg(unix)]
+    {
+        if launcher.exists() {
+            std::os::unix::fs::symlink(&launcher, &link)?;
+        }
+    }
+    #[cfg(windows)]
+    {
+        if launcher.with_extension("exe").exists() {
+            std::os::windows::fs::symlink_file(
+                launcher.with_extension("exe"),
+                link.with_extension("exe"),
+            )?;
+        }
+    }
+
+    // Also wire hermes-updater to the same binary (busybox-style).
+    let updater_link = bin_dir.join("hermes-updater");
+    let _ = std::fs::remove_file(&updater_link);
+    #[cfg(unix)]
+    {
+        if launcher.exists() {
+            std::os::unix::fs::symlink(&launcher, &updater_link)?;
+        }
+    }
+    #[cfg(windows)]
+    {
+        if launcher.with_extension("exe").exists() {
+            std::os::windows::fs::symlink_file(
+                launcher.with_extension("exe"),
+                updater_link.with_extension("exe"),
+            )?;
+        }
+    }
+
+    println!("→ Running hermes dev sync (venv, deps, builds)...");
+    let venv_python = checkout.join("venv").join("bin").join("python");
+    let python = if venv_python.exists() {
+        venv_python
+    } else {
+        // dev sync will create the venv; use the system python for the call
+        PathBuf::from("python3")
+    };
+
+    let status = std::process::Command::new(&python)
+        .args(["-m", "hermes_cli.main", "dev", "sync"])
+        .current_dir(&checkout)
+        .env("HERMES_HOME", home)
+        .status()
+        .context("failed to run hermes dev sync")?;
+    if !status.success() {
+        anyhow::bail!("hermes dev sync failed with status {status}");
+    }
+
+    // After dev sync, the venv exists. Re-wire the command link to the
+    // venv's hermes entry point if we didn't have a bin/hermes before.
+    if !launcher.exists() {
+        let venv_hermes = checkout.join("venv").join("bin").join("hermes");
+        if venv_hermes.exists() {
+            let _ = std::fs::remove_file(&link);
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&venv_hermes, &link)?;
+            #[cfg(windows)]
+            {
+                let exe = venv_hermes.with_extension("exe");
+                if exe.exists() {
+                    std::os::windows::fs::symlink_file(exe, link.with_extension("exe"))?;
+                }
+            }
+        }
+    }
+
+    println!("✓ Source install complete at {}", checkout.display());
+    println!("  Run `hermes` to start, or `hermes setup` to configure.");
     Ok(())
 }
 
