@@ -305,6 +305,7 @@ from hermes_cli.subcommands.config import build_config_parser
 from hermes_cli.subcommands.console import build_console_parser
 from hermes_cli.subcommands.version import build_version_parser
 from hermes_cli.subcommands.update import build_update_parser
+from hermes_cli.subcommands.adopt import build_adopt_parser
 from hermes_cli.subcommands.uninstall import build_uninstall_parser
 from hermes_cli.subcommands.dashboard import build_dashboard_parser
 from hermes_cli.subcommands.gui import build_gui_parser
@@ -9419,6 +9420,16 @@ def _discard_lockfile_churn(git_cmd, repo_root):
         pass
 
 
+def cmd_adopt(args):
+    """Switch this install to managed releases (slot-based).
+
+    Delegates to ``hermes_cli.subcommands.adopt.cmd_adopt``.
+    """
+    from hermes_cli.subcommands.adopt import cmd_adopt as _cmd_adopt_impl
+
+    _cmd_adopt_impl(args)
+
+
 def cmd_update(args):
     """Update Hermes Agent to the latest version.
 
@@ -14699,6 +14710,11 @@ def main():
     # update command  (parser built in hermes_cli/subcommands/update.py)
     # =========================================================================
     build_update_parser(subparsers, cmd_update=cmd_update)
+
+    # =========================================================================
+    # adopt command  (parser built in hermes_cli/subcommands/adopt.py)
+    # =========================================================================
+    build_adopt_parser(subparsers, cmd_adopt=cmd_adopt)
 
     # =========================================================================
     # uninstall command  (parser built in hermes_cli/subcommands/uninstall.py)
