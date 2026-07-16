@@ -215,6 +215,38 @@ if [ -n "$NODE_ARCH" ] && [ -n "$NODE_OS" ]; then
         echo "    Downloading $TARBALL..."
         TMP_TAR=$(mktemp)
         curl -fsSL "$DOWNLOAD_URL" -o "$TMP_TAR"
+
+        # Verify checksum from the official SHASUMS256.txt
+        echo "    Verifying checksum..."
+        SHASUMS_URL="https://nodejs.org/dist/latest-v${NODE_VERSION}.x/SHASUMS256.txt"
+        TMP_SHASUMS=$(mktemp)
+        if ! curl -fsSL "$SHASUMS_URL" -o "$TMP_SHASUMS"; then
+            echo "ERROR: Could not download SHASUMS256.txt from $SHASUMS_URL" >&2
+            rm -f "$TMP_TAR" "$TMP_SHASUMS"
+            exit 1
+        fi
+        EXPECTED_HASH=$(grep "  $TARBALL\$" "$TMP_SHASUMS" | awk '{print $1}')
+        if [ -z "$EXPECTED_HASH" ]; then
+            echo "ERROR: $TARBALL not found in SHASUMS256.txt" >&2
+            rm -f "$TMP_TAR" "$TMP_SHASUMS"
+            exit 1
+        fi
+        ACTUAL_HASH=$(sha256sum "$TMP_TAR" | awk '{print $1}')
+        if [ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]; then
+            echo "ERROR: Node checksum mismatch for $TARBALL" >&2
+            echo "    Expected: $EXPECTED_HASH" >&2
+            echo "    Got:      $ACTUAL_HASH" >&2
+            rm -f "$TMP_TAR" "$TMP_SHASUMS"
+            exit 1
+        fi
+        rm -f "$TMP_SHASUMS"
+        echo "    Checksum verified"
+
+        # Record the resolved full version for reproducibility
+        RESOLVED_NODE_VERSION=$(echo "$TARBALL" | grep -oE "v${NODE_VERSION}\.[0-9]+\.[0-9]+" | head -1)
+        echo "    Resolved Node version: $RESOLVED_NODE_VERSION"
+        echo "$RESOLVED_NODE_VERSION" > "$NODE_DIR/.node-version"
+
         if [[ "$TARBALL" == *.zip ]]; then
             NODE_UNPACK=$(mktemp -d)
             python3 -m zipfile -e "$TMP_TAR" "$NODE_UNPACK"
