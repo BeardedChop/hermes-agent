@@ -32,8 +32,12 @@ PUBLIC_KEY="${KEYS[1]}"
 printf '==> building hermes-updater with ephemeral E2E trust key\n'
 (
     cd "$LAUNCHER_DIR"
-    HERMES_RELEASE_PUBLIC_KEY="$PUBLIC_KEY" \
-        nix shell nixpkgs#gcc nixpkgs#openssl -c cargo build --quiet
+    if grep -qi '^ID=nixos' /etc/os-release 2>/dev/null; then
+        HERMES_RELEASE_PUBLIC_KEY="$PUBLIC_KEY" \
+            nix shell nixpkgs#gcc nixpkgs#openssl -c cargo build --quiet
+    else
+        HERMES_RELEASE_PUBLIC_KEY="$PUBLIC_KEY" cargo build --quiet
+    fi
 )
 LAUNCHER="$LAUNCHER_DIR/target/debug/hermes"
 PLATFORM=$(

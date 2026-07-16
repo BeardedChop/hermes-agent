@@ -130,15 +130,15 @@ impl Drop for UpdateMarker {
 }
 
 pub fn apply_feature_ledger(hermes_home: &Path, version: &str) -> Result<()> {
-    let launcher = slots::slot_path(hermes_home, version)
-        .join("bin")
-        .join(if cfg!(windows) {
-            "hermes.exe"
-        } else {
-            "hermes"
-        });
+    let slot = slots::slot_path(hermes_home, version);
+    let launcher = slot.join("bin").join(if cfg!(windows) {
+        "hermes.exe"
+    } else {
+        "hermes"
+    });
     let status = std::process::Command::new(launcher)
         .args(["features", "apply-ledger", "--json"])
+        .current_dir(&slot)
         .status()
         .context("cannot run feature ledger application")?;
     if !status.success() {
@@ -221,6 +221,7 @@ fn run_preflight(staging: &Path) -> Result<()> {
     let status = std::process::Command::new(&executable)
         .arg("doctor")
         .arg("--preflight")
+        .current_dir(staging)
         .env("HERMES_ARTIFACT_ROOT", staging)
         .status()
         .with_context(|| format!("cannot run staged preflight via {}", executable.display()))?;

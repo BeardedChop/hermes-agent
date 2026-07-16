@@ -194,34 +194,60 @@ jobs:
             dist/hermes-updater-${{ matrix.platform }}*
           retention-days: 30
 
-      - name: Upload to GitHub Releases (tag only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${{ github.ref_name }}" \
-            --generate-notes \
-            "dist/hermes-${{ steps.version.outputs.version }}-${{ matrix.platform }}.*" \
-            "dist/hermes-updater-${{ matrix.platform }}*"
 
-      - name: Upload to nightly prerelease (schedule only)
-        if: github.event_name == 'schedule'
+  lifecycle-e2e:
+    name: Managed lifecycle E2E
+    if: >-
+      github.repository == 'NousResearch/hermes-agent' ||
+      github.repository == 'ethernet8023/hermes-agent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - name: Install uv and fixture dependencies
         shell: bash
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          python -m pip install --disable-pip-version-check pynacl==1.5.0
+      - name: Slot lifecycle
+        run: bash scripts/e2e/test-slot-lifecycle.sh
+      - name: Historical adoption funnel
+        run: bash scripts/e2e/test-adoption.sh
+      - name: Ejected worktree lifecycle
+        run: bash scripts/e2e/test-ejected-worktrees.sh
+
+  publish:
+    name: Publish release bundles
+    needs: [build, lifecycle-e2e]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish stable tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --generate-notes dist/*
+      - name: Publish rolling nightly
+        if: github.event_name == 'schedule'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Create or update the rolling nightly prerelease
-          gh release create hermes-nightly \
-            --prerelease \
-            --title "Hermes Nightly (${{ steps.version.outputs.version }})" \
-            --notes "Automated nightly build for ${{ steps.version.outputs.version }}.
-          Built from commit ${{ github.sha }}.
-          Platform: ${{ matrix.platform }}" \
-            "dist/hermes-${{ steps.version.outputs.version }}-${{ matrix.platform }}.*" \
-            "dist/hermes-updater-${{ matrix.platform }}*" \
-            || \
-          gh release upload hermes-nightly \
-            --clobber \
-            "dist/hermes-${{ steps.version.outputs.version }}-${{ matrix.platform }}.*" \
-            "dist/hermes-updater-${{ matrix.platform }}*"
+          gh release view hermes-nightly --repo "${{ github.repository }}" >/dev/null 2>&1 || \
+            gh release create hermes-nightly --repo "${{ github.repository }}" --prerelease \
+              --title "Hermes Nightly" --notes "Automated nightly build from ${{ github.sha }}."
+          gh release upload hermes-nightly --repo "${{ github.repository }}" --clobber dist/*

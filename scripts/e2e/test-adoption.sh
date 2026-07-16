@@ -1,213 +1,158 @@
 #!/usr/bin/env bash
-#
-# Phase 2 task 2.8: E2E gate — the full adoption funnel.
-#
-# This is "the single most valuable test in this whole project" (§2.13).
-# A REAL legacy install created from an old release tag updates itself
-# to current main via its own `hermes update`, then adopts to slots.
-#
-# Usage: bash scripts/e2e/test-adoption.sh [OLD_TAG]
-#   OLD_TAG defaults to a recent tag (maintainer supplies one known-good)
-#
-# This is a SLOW test (full legacy install) — nightly CI, not per-PR.
-#
-# Requires: git, the hermes launcher binary, a file:// bundle fixture.
-
+# Real legacy -> current -> managed adoption funnel gate.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-LAUNCHER_DIR="$REPO_ROOT/apps/hermes-launcher"
+OLD_TAG="${1:-v2026.6.19}"
 
-# Find the launcher binary
-LAUNCHER=""
-for candidate in \
-    "$LAUNCHER_DIR/target/debug/hermes" \
-    "$LAUNCHER_DIR/target/release/hermes"; do
-    if [ -x "$candidate" ]; then
-        LAUNCHER="$candidate"
-        break
+# Historical installers may invoke sudo on NixOS. Run the entire fixture in a
+# disposable Linux environment instead of allowing root-owned host temp state.
+if [ -z "${HERMES_ADOPTION_E2E_CONTAINER:-}" ] && grep -qi '^ID=nixos' /etc/os-release 2>/dev/null; then
+    GIT_BUNDLE=$(mktemp --suffix=.bundle)
+    CURRENT_REF=$(git -C "$REPO_ROOT" branch --show-current)
+    git -C "$REPO_ROOT" bundle create "$GIT_BUNDLE" --all
+    if docker run --rm \
+        -e HERMES_ADOPTION_E2E_CONTAINER=1 \
+        -e HERMES_ADOPTION_GIT_SOURCE=/tmp/hermes-current.bundle \
+        -e HERMES_ADOPTION_CURRENT_REF="$CURRENT_REF" \
+        -e CARGO_TARGET_DIR=/tmp/cargo-target \
+        -v "$REPO_ROOT:$REPO_ROOT:ro" \
+        -v "$GIT_BUNDLE:/tmp/hermes-current.bundle:ro" \
+        -w "$REPO_ROOT" \
+        rust:1.88-bookworm \
+        bash -c 'for attempt in 1 2 3; do apt-get update -qq && apt-get -o Acquire::Retries=3 install -y -qq git curl python3 python3-venv python3-pip nodejs npm zstd util-linux pkg-config libssl-dev >/dev/null && break; [ "$attempt" -lt 3 ] || exit 1; rm -rf /var/lib/apt/lists/*; done && python3 -m pip install --break-system-packages -q pynacl==1.5.0 && bash scripts/e2e/test-adoption.sh "$1"' -- "$OLD_TAG"; then
+        STATUS=0
+    else
+        STATUS=$?
     fi
+    rm -f "$GIT_BUNDLE"
+    exit "$STATUS"
+fi
+
+WORK=$(mktemp -d)
+export HOME="$WORK/user-home"
+export HERMES_HOME="$WORK/hermes-home"
+LEGACY_SOURCE="$WORK/legacy-source"
+LEGACY_CHECKOUT="$HERMES_HOME/hermes-agent"
+RELEASES="$WORK/releases"
+GIT_SOURCE="${HERMES_ADOPTION_GIT_SOURCE:-$REPO_ROOT}"
+CURRENT_REF="${HERMES_ADOPTION_CURRENT_REF:-$(git -C "$REPO_ROOT" branch --show-current)}"
+mkdir -p "$HOME/.local/bin" "$HERMES_HOME" "$RELEASES"
+trap 'rm -rf "$WORK"' EXIT
+
+printf '==> cloning historical cohort %s\n' "$OLD_TAG"
+git clone --branch "$OLD_TAG" "$GIT_SOURCE" "$LEGACY_SOURCE" >/dev/null
+[ -f "$LEGACY_SOURCE/scripts/install.sh" ]
+
+printf '==> installing with the historical installer\n'
+HELP=$(bash "$LEGACY_SOURCE/scripts/install.sh" --help)
+ARGS=(--skip-setup --dir "$LEGACY_CHECKOUT")
+grep -q -- '--branch' <<<"$HELP" && ARGS+=(--branch "$OLD_TAG")
+grep -q -- '--hermes-home' <<<"$HELP" && ARGS+=(--hermes-home "$HERMES_HOME")
+grep -q -- '--skip-browser' <<<"$HELP" && ARGS+=(--skip-browser)
+INSTALL_LOG="$WORK/historical-install.log"
+if ! HERMES_HOME="$HERMES_HOME" bash "$LEGACY_SOURCE/scripts/install.sh" "${ARGS[@]}" >"$INSTALL_LOG" 2>&1; then
+    echo "historical installer failed:" >&2
+    tail -80 "$INSTALL_LOG" >&2
+    exit 1
+fi
+for candidate in "$LEGACY_CHECKOUT/.venv/bin/hermes" "$LEGACY_CHECKOUT/venv/bin/hermes"; do
+    [ -x "$candidate" ] && HERMES_BIN="$candidate" && break
+done
+[ -n "${HERMES_BIN:-}" ] || { echo 'historical installer produced no Hermes executable' >&2; exit 1; }
+"$HERMES_BIN" --version >/dev/null || { echo 'historical Hermes executable does not boot' >&2; exit 1; }
+# Old installers used a wrapper file here; adoption's undo contract records a
+# link target, so normalize the equivalent command entry to a symlink first.
+rm -f "$HOME/.local/bin/hermes"
+ln -s "$HERMES_BIN" "$HOME/.local/bin/hermes"
+OLD_TARGET=$(readlink "$HOME/.local/bin/hermes")
+
+printf '==> hop 1: historical updater reaches current source\n'
+git -C "$LEGACY_CHECKOUT" remote set-url origin "$GIT_SOURCE"
+git -C "$LEGACY_CHECKOUT" fetch origin \
+    "$CURRENT_REF:refs/remotes/origin/main"
+if ! HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" update --yes; then
+    HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" update --yes
+fi
+
+# The update may replace the venv entry point; resolve it again.
+for candidate in "$LEGACY_CHECKOUT/.venv/bin/hermes" "$LEGACY_CHECKOUT/venv/bin/hermes"; do
+    [ -x "$candidate" ] && HERMES_BIN="$candidate" && break
 done
 
-OLD_TAG="${1:-}"
-if [ -z "$OLD_TAG" ]; then
-    echo "USAGE: bash scripts/e2e/test-adoption.sh <OLD_TAG>"
-    echo "  OLD_TAG: a git tag for a real past release (e.g. v0.18.0)"
-    echo ""
-    echo "  This test clones at OLD_TAG, creates a legacy install, updates to"
-    echo "  current main, then adopts to managed slots."
-    echo ""
-    echo "  Skip with: bash scripts/e2e/test-adoption.sh --skip"
-    exit 1
-fi
+printf '==> hop 2: prompt appears exactly once\n'
+mkdir -p "$HERMES_HOME"
+printf 'updates:\n  adopt: prompt\n' > "$HERMES_HOME/config.yaml"
+rm -f "$HERMES_HOME/state/adoption-snooze"
+FIRST=$(script -qec "HERMES_HOME='$HERMES_HOME' '$HERMES_BIN' --version" /dev/null)
+SECOND=$(script -qec "HERMES_HOME='$HERMES_HOME' '$HERMES_BIN' --version" /dev/null)
+COUNT=$(printf '%s\n%s\n' "$FIRST" "$SECOND" | grep -c 'Hermes can switch this install to managed releases' || true)
+[ "$COUNT" -eq 1 ] || { echo "expected one adoption offer, got $COUNT" >&2; exit 1; }
 
-if [ "$OLD_TAG" = "--skip" ]; then
-    echo "SKIP: adoption E2E gate (no OLD_TAG provided)"
-    exit 0
-fi
+printf '==> building trusted updater and signed bundle fixture\n'
+KEYS=$(python3 - <<'PY'
+import base64
+from nacl.signing import SigningKey
+key = SigningKey.generate()
+print(base64.b64encode(bytes(key)).decode())
+print(base64.b64encode(bytes(key.verify_key)).decode())
+PY
+)
+SIGNING_KEY=$(printf '%s\n' "$KEYS" | sed -n '1p')
+PUBLIC_KEY=$(printf '%s\n' "$KEYS" | sed -n '2p')
+TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/apps/hermes-launcher/target}"
+(
+    cd "$REPO_ROOT/apps/hermes-launcher"
+    HERMES_RELEASE_PUBLIC_KEY="$PUBLIC_KEY" cargo build --locked --quiet
+)
+LAUNCHER="$TARGET_DIR/debug/hermes"
+[ -x "$LAUNCHER" ]
+PLATFORM=$(case "$(uname -s)-$(uname -m)" in Linux-x86_64) echo linux-x64;; Linux-aarch64) echo linux-arm64;; Darwin-arm64) echo darwin-arm64;; *) exit 1;; esac)
+VERSION=1.0.0
+TREE="$WORK/bundle"
+mkdir -p "$TREE/bin" "$TREE/runtime/venv/bin" "$TREE/runtime/node/bin" "$TREE/runtime/tools" "$TREE/runtime/python/bin" "$TREE/app/skills/demo" "$TREE/ui/tui/dist" "$TREE/ui/web/dist" "$RELEASES/$VERSION"
+cp "$LAUNCHER" "$TREE/bin/hermes"
+chmod +x "$TREE/bin/hermes"
+printf 'demo\n' > "$TREE/app/skills/demo/SKILL.md"
+printf 'tui\n' > "$TREE/ui/tui/dist/entry.js"
+printf 'web\n' > "$TREE/ui/web/dist/index.html"
+printf '%s\n' "$VERSION" > "$TREE/VERSION"
+cat > "$TREE/runtime/venv/bin/python" <<'PY'
+#!/bin/sh
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname "$0")/../../.." && pwd)
+[ "${1:-}" = "-c" ] && exit 0
+if [ "${1:-}" = "-m" ] && [ "${2:-}" = "hermes_cli.main" ]; then shift 2; fi
+[ "${1:-}" = "doctor" ] && [ "${2:-}" = "--preflight" ] && exit 0
+[ "${1:-}" = "version-probe" ] && cat "$ROOT/VERSION" && exit 0
+exit 0
+PY
+chmod +x "$TREE/runtime/venv/bin/python"
+python3 "$REPO_ROOT/scripts/release/write-manifest.py" --bundle-dir "$TREE" --version "$VERSION" --channel stable --git-sha "$(printf 'a%.0s' {1..40})" --platform "$PLATFORM" --signing-key "$SIGNING_KEY" >/dev/null
+mkdir -p "$WORK/archive/bundle"
+cp -a "$TREE/." "$WORK/archive/bundle/"
+tar --zstd -cf "$RELEASES/$VERSION/hermes-$VERSION-$PLATFORM.tar.zst" -C "$WORK/archive" bundle
+printf '%s\n' "$VERSION" > "$RELEASES/latest-stable.txt"
+UPDATER_ASSET="$RELEASES/hermes-updater-$PLATFORM"
+cp "$LAUNCHER" "$UPDATER_ASSET"
+python3 - "$UPDATER_ASSET" <<'PY'
+import hashlib, pathlib, sys
+p=pathlib.Path(sys.argv[1]); p.with_name(p.name+'.sha256').write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n')
+PY
 
-# Create temp directories
-export HERMES_HOME=$(mktemp -d)
-FIXTURE_DIR=$(mktemp -d)
-trap 'rm -rf "$HERMES_HOME" "$FIXTURE_DIR" "$WORK_DIR"' EXIT
-WORK_DIR=$(mktemp -d)
+printf '==> hop 3: invoke adoption through the updated Python CLI\n'
+BEFORE_HEAD=$(git -C "$LEGACY_CHECKOUT" rev-parse HEAD)
+BEFORE_STATUS=$(git -C "$LEGACY_CHECKOUT" status --porcelain=v1 --untracked-files=all)
+HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" adopt --yes --yes-dirty --source "file://$RELEASES"
+[ "$(cat "$HERMES_HOME/current.txt")" = "$VERSION" ]
+[ "$(readlink "$HOME/.local/bin/hermes")" = "$HERMES_HOME/bin/hermes" ]
+[ "$(cd "$HOME" && "$HERMES_HOME/bin/hermes" launch version-probe)" = "$VERSION" ]
+[ "$(git -C "$LEGACY_CHECKOUT" rev-parse HEAD)" = "$BEFORE_HEAD" ]
+[ "$(git -C "$LEGACY_CHECKOUT" status --porcelain=v1 --untracked-files=all)" = "$BEFORE_STATUS" ]
 
-echo "==> Temp HERMES_HOME: $HERMES_HOME"
-echo "==> Fixture dir: $FIXTURE_DIR"
-echo "==> Old tag: $OLD_TAG"
-
-# ─── Step 1: Legacy install at OLD_TAG ───────────────────────────────
-
-echo ""
-echo "=== Step 1: Clone at $OLD_TAG ==="
-LEGACY_CHECKOUT="$HERMES_HOME/hermes-agent"
-git clone --depth 1 --branch "$OLD_TAG" "$REPO_ROOT" "$LEGACY_CHECKOUT" 2>&1 | tail -3
-
-# Point origin at the current repo so "origin/main" is today's code
-cd "$LEGACY_CHECKOUT"
-git fetch origin main 2>/dev/null || git remote set-url origin "$REPO_ROOT"
-
-echo "  PASS: legacy checkout at $OLD_TAG"
-
-# ─── Step 2: Create venv (the old way) ─────────────────────────────
-
-echo ""
-echo "=== Step 2: Create legacy venv ==="
-# Use the old tag's install.sh to create the venv (skip setup + browser)
-if [ -f "$LEGACY_CHECKOUT/scripts/install.sh" ]; then
-    cd "$LEGACY_CHECKOUT"
-    HERMES_HOME="$HERMES_HOME" bash scripts/install.sh --skip-setup --skip-browser 2>&1 | tail -5 || true
-    echo "  (install.sh may have warnings — non-fatal for this test)"
-else
-    echo "  WARN: no install.sh at this tag — creating venv manually"
-    python3 -m venv "$LEGACY_CHECKOUT/venv"
-    "$LEGACY_CHECKOUT/venv/bin/pip" install -e "$LEGACY_CHECKOUT[all]" 2>&1 | tail -3 || true
-fi
-
-# Verify the legacy install boots
-HERMES_BIN="$LEGACY_CHECKOUT/venv/bin/hermes"
-if [ -x "$HERMES_BIN" ]; then
-    VERSION_OUTPUT=$("$HERMES_BIN" --version 2>&1 | head -1)
-    echo "  Legacy version: $VERSION_OUTPUT"
-else
-    echo "  WARN: hermes binary not found at $HERMES_BIN — install may have failed"
-    echo "  This is expected for very old tags with different layouts."
-fi
-
-# ─── Step 3: Hop 1 — old updater updates to current main ────────────
-
-echo ""
-echo "=== Step 3: Hop 1 — old updater → current main ==="
-echo "  This is the CRITICAL test: old code updates itself against today's main."
-echo "  If it fails, the compat fence has a hole."
-
-cd "$LEGACY_CHECKOUT"
-# Run the old tree's own updater (retry once permitted, mirroring Tauri behavior)
-HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" update --yes 2>&1 | tail -20 || {
-    echo "  First attempt failed — retrying once (update-boundary crash class)..."
-    HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" update --yes 2>&1 | tail -20
-}
-
-EXIT_CODE=$?
-if [ $EXIT_CODE -ne 0 ]; then
-    echo ""
-    echo "  FAIL: hop 1 failed — old updater could not update to current main"
-    echo "  Identify the symbol from the traceback and fix."
-    exit 1
-fi
-echo "  PASS: hop 1 — old code updated to current main (exit 0)"
-
-# ─── Step 4: Hop 2 — adoption offer on next launch ─────────────────
-
-echo ""
-echo "=== Step 4: Hop 2 — adoption offer ==="
-# The next launch should detect the legacy layout and show the adoption offer
-# (if updates.adopt = prompt and stdin is a TTY)
-# In non-interactive mode, the offer is silent — check the snooze stamp instead
-HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" --version 2>&1 | head -3
-
-# Check if adoption detection runs (crash-proof — never blocks)
-echo "  PASS: launch after hop 1 succeeded (adoption detector ran)"
-
-# ─── Step 5: Hop 3 — adoption ──────────────────────────────────────
-
-echo ""
-echo "=== Step 5: Hop 3 — adoption ==="
-
-# Create a minimal bundle fixture for the adopt
-echo "  Creating bundle fixture..."
-mkdir -p "$FIXTURE_DIR/v1/bin" "$FIXTURE_DIR/v1/runtime/venv/bin" "$FIXTURE_DIR/v1/app"
-echo "#!/bin/sh" > "$FIXTURE_DIR/v1/bin/hermes"
-echo "echo 'hermes 1.0.0 (adopted)'" >> "$FIXTURE_DIR/v1/bin/hermes"
-chmod +x "$FIXTURE_DIR/v1/bin/hermes"
-echo "# fake python" > "$FIXTURE_DIR/v1/runtime/venv/bin/python"
-echo "# fake source" > "$FIXTURE_DIR/v1/app/run_agent.py"
-echo "1.0.0" > "$FIXTURE_DIR/latest-stable.txt"
-
-# Write manifest for the fixture
-python3 -c "
-import json, hashlib, os
-files = {}
-for root, dirs, filenames in os.walk('$FIXTURE_DIR/v1'):
-    for f in filenames:
-        path = os.path.join(root, f)
-        rel = os.path.relpath(path, '$FIXTURE_DIR/v1')
-        if rel in ('manifest.json',): continue
-        h = hashlib.sha256(open(path, 'rb').read()).hexdigest()
-        files[rel] = f'sha256:{h}'
-manifest = {'schema': 1, 'version': '1.0.0', 'channel': 'stable', 'git_sha': 'a'*40,
-            'platform': 'linux-x64', 'min_updater_version': '0.1.0', 'desktop': False, 'files': files}
-open(os.path.join('$FIXTURE_DIR/v1', 'manifest.json'), 'w').write(json.dumps(manifest, indent=2) + '\n')
-"
-
-# Record the checkout's tree hash before adoption
-BEFORE_HASH=$(cd "$LEGACY_CHECKOUT" && git rev-parse HEAD 2>/dev/null || echo "no-git")
-
-# Run adopt using the launcher binary (if available)
-if [ -n "$LAUNCHER" ]; then
-    echo "  Running adopt via: $LAUNCHER"
-    HERMES_HOME="$HERMES_HOME" "$LAUNCHER" adopt --from-checkout "$LEGACY_CHECKOUT" --source "file://$FIXTURE_DIR" 2>&1 | tail -10 || {
-        echo "  NOTE: adopt may fail if the bundle fixture is too minimal."
-        echo "  The key assertion is that the checkout is untouched."
-    }
-
-    # Check if current.txt was created
-    if [ -f "$HERMES_HOME/current.txt" ]; then
-        CURRENT=$(cat "$HERMES_HOME/current.txt")
-        echo "  PASS: current.txt says $CURRENT"
-    else
-        echo "  WARN: current.txt not created (adopt may need a complete bundle)"
-    fi
-
-    # Verify the checkout is untouched
-    AFTER_HASH=$(cd "$LEGACY_CHECKOUT" && git rev-parse HEAD 2>/dev/null || echo "no-git")
-    if [ "$BEFORE_HASH" = "$AFTER_HASH" ]; then
-        echo "  PASS: checkout untouched (SHA unchanged: ${BEFORE_HASH:0:8})"
-    else
-        echo "  FAIL: checkout was modified! Before: $BEFORE_HASH, After: $AFTER_HASH"
-        exit 1
-    fi
-else
-    echo "  SKIP: launcher binary not built — adopt step skipped"
-    echo "  Build it: cd $LAUNCHER_DIR && nix shell nixpkgs#gcc nixpkgs#openssl -c cargo build"
-fi
-
-# ─── Step 6: Undo ───────────────────────────────────────────────────
-
-echo ""
-echo "=== Step 6: Adopt undo ==="
-if [ -n "$LAUNCHER" ] && [ -f "$HERMES_HOME/.pre-adopt-target" ]; then
-    HERMES_HOME="$HERMES_HOME" "$LAUNCHER" adopt --undo 2>&1 | tail -5
-    echo "  PASS: adoption undone"
-else
-    echo "  SKIP: no .pre-adopt-target (adopt didn't complete)"
-fi
-
-echo ""
-echo "========================================"
-echo "  E2E_PASS — adoption funnel gate passed!"
-echo "========================================"
-echo ""
-echo "  The most valuable test in the project:"
-echo "  an old release updated itself to current main, then adopted."
+printf '==> undo restores the historical launcher\n'
+HERMES_HOME="$HERMES_HOME" "$HERMES_HOME/bin/hermes-updater" adopt --undo
+[ "$(readlink "$HOME/.local/bin/hermes")" = "$OLD_TARGET" ]
+"$HERMES_BIN" --version >/dev/null
+printf 'E2E_PASS: real historical adoption funnel\n'
