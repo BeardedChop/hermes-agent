@@ -311,3 +311,24 @@ class TestEd25519Signing:
         wrong_key = nacl.signing.SigningKey.generate()
         wrong_pubkey_b64 = base64.b64encode(bytes(wrong_key.verify_key)).decode()
         assert not verify_signature(bundle_fixture, pubkey_b64=wrong_pubkey_b64)
+
+    def test_verify_rejects_wrong_algorithm(self, bundle_fixture):
+        """verify_signature must reject a .sig with a non-ed25519 algorithm."""
+        from write_manifest import sign_manifest, verify_signature
+
+        write_manifest(
+            bundle_fixture,
+            version="2026.07.14",
+            channel="nightly",
+            git_sha="e" * 40,
+            platform="linux-x64",
+        )
+        assert sign_manifest(bundle_fixture, seckey_b64=None)
+
+        # Tamper with the algorithm field
+        sig_path = bundle_fixture / "manifest.json.sig"
+        sig_data = json.loads(sig_path.read_text())
+        sig_data["algorithm"] = "hmac-sha256"
+        sig_path.write_text(json.dumps(sig_data))
+
+        assert not verify_signature(bundle_fixture)

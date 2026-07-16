@@ -15,17 +15,18 @@ manifest.json schema:
       "files": { "runtime/venv/bin/python": "sha256:...", "...": "..." }
     }
 
-The signature is a minisign signature over manifest.json itself, shipped as
-manifest.json.minisig — verify-manifest-then-verify-files gives whole-bundle
-integrity with one signature.
+The signature is an Ed25519 signature over manifest.json itself, shipped as
+manifest.json.sig — a JSON document containing the algorithm, base64-encoded
+public key, and base64-encoded signature. The Rust updater verifies with
+ed25519-dalek, giving whole-bundle integrity with one signature.
 
 Usage:
-    python scripts/release/write-manifest.py --bundle-dir dist/bundle \
-        --version 2026.07.14 --channel nightly --platform linux-x64 \
-        --git-sha $(git rev-parse HEAD) [--minisign-key /path/to/seckey]
+    python scripts/release/write-manifest.py --bundle-dir dist/bundle \\
+        --version 2026.07.14 --channel nightly --platform linux-x64 \\
+        --git-sha $(git rev-parse HEAD) [--signing-key /path/to/seckey]
 
     # Verify a bundle:
-    python scripts/release/write-manifest.py --verify --bundle-dir dist/bundle \
+    python scripts/release/write-manifest.py --verify --bundle-dir dist/bundle \\
         --pubkey /path/to/pubkey
 """
 
@@ -155,6 +156,10 @@ def sign_manifest(bundle_dir: Path, seckey_b64: str | None = None) -> bool:
     The signature is a JSON file with the base64-encoded signature and
     pubkey, so the Rust updater can verify with ed25519-dalek.
 
+    Fails closed: raises RuntimeError if PyNaCl is not installed. A release
+    manifest must never ship unsigned — silently skipping the signature
+    would produce a bundle the updater rejects at apply time.
+
     Args:
         bundle_dir: Directory containing manifest.json.
         seckey_b64: Base64-encoded Ed25519 secret key. If None, a throwaway
@@ -165,8 +170,10 @@ def sign_manifest(bundle_dir: Path, seckey_b64: str | None = None) -> bool:
     try:
         import nacl.signing
     except ImportError:
-        print("WARN: PyNaCl not installed — skipping signature", file=sys.stderr)
-        return False
+        raise RuntimeError(
+            "PyNaCl is not installed — cannot sign manifest. "
+            "Install with: pip install pynacl"
+        )
 
     manifest_path = bundle_dir / "manifest.json"
     sig_path = bundle_dir / "manifest.json.sig"
@@ -214,6 +221,11 @@ def verify_signature(bundle_dir: Path, pubkey_b64: str | None = None) -> bool:
         return False
 
     sig_data = json.loads(sig_path.read_text())
+
+    algorithm = sig_data.get("algorithm")
+    if algorithm != "ed25519":
+        return False
+
     expected_pubkey = pubkey_b64 or sig_data.get("pubkey")
     if not expected_pubkey:
         return False
@@ -284,8 +296,8 @@ def main():
     )
     print(f"Wrote manifest.json with {len(manifest['files'])} file hashes")
 
-    if sign_manifest(bundle_dir, args.signing_key):
-        print("Signed manifest.json.sig")
+    sign_manifest(bundle_dir, args.signing_key)
+    print("Signed manifest.json.sig")
 
 
 if __name__ == "__main__":

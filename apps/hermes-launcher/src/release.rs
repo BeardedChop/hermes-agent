@@ -389,6 +389,14 @@ pub fn verify_bundle(bundle_dir: &Path, expected_pubkey: Option<&str>) -> Result
     let sig: Signature =
         serde_json::from_slice(&sig_bytes).context("failed to parse manifest.json.sig")?;
 
+    // Validate the declared algorithm — don't silently accept unknown schemes.
+    if sig.algorithm != "ed25519" {
+        bail!(
+            "unsupported signature algorithm: {} (expected ed25519)",
+            sig.algorithm
+        );
+    }
+
     let pubkey = expected_pubkey
         .ok_or_else(|| anyhow::anyhow!("no trusted release public key was provided"))?;
     verify_ed25519(&manifest_bytes, &sig.signature, pubkey)?;
@@ -817,5 +825,21 @@ mod tests {
         let (pubkey, _) = sign_manifest(tmp.path());
         // Should verify without error — symlink is skipped by both sides
         verify_bundle(tmp.path(), Some(&pubkey)).unwrap();
+    }
+
+    #[test]
+    fn test_verify_rejects_wrong_algorithm() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_bundle_fixture(tmp.path());
+        write_manifest(tmp.path());
+        let (pubkey, _) = sign_manifest(tmp.path());
+        // Rewrite the .sig file with a wrong algorithm
+        let sig_path = tmp.path().join("manifest.json.sig");
+        let mut sig: Signature = serde_json::from_slice(&std::fs::read(&sig_path).unwrap()).unwrap();
+        sig.algorithm = "hmac-sha256".to_string();
+        std::fs::write(&sig_path, serde_json::to_vec_pretty(&sig).unwrap()).unwrap();
+        let result = verify_bundle(tmp.path(), Some(&pubkey));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("algorithm"));
     }
 }
