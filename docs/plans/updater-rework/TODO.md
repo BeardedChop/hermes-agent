@@ -20,10 +20,11 @@ This is an implementation checklist, not a record that the phases are complete. 
   - Tests: 5 new covering happy path, platform/channel/version mismatch, path-traversal rejection.
   - Spec: `01-phase0-bundles.md:248-280`.
 
-- [ ] Make signing fail closed in the canonical manifest writer.
-  - `scripts/release/write-manifest.py:165-169,287-288` exits successfully when PyNaCl is absent.
-  - Reconcile stale minisign/`.minisig` prose with the implemented Ed25519 JSON `.sig` protocol, or implement the specified protocol consistently.
-  - Validate the signature document's declared algorithm rather than ignoring it.
+- [x] Make signing fail closed in the canonical manifest writer.
+  - `sign_manifest()` now raises `RuntimeError` when PyNaCl is absent instead of returning False. `main()` treats signing as mandatory.
+  - Stale minisign/`.minisig` prose in module docstring reconciled with the implemented Ed25519 JSON `.sig` protocol.
+  - Algorithm validated on both sides: Python `verify_signature()` + Rust `verify_bundle()` reject non-ed25519 algorithms.
+  - Tests: `test_verify_rejects_wrong_algorithm` (Python + Rust).
   - Spec: `01-phase0-bundles.md:248-280`.
 
 - [ ] Establish one explicit bootstrap trust root.
