@@ -306,6 +306,8 @@ from hermes_cli.subcommands.console import build_console_parser
 from hermes_cli.subcommands.version import build_version_parser
 from hermes_cli.subcommands.update import build_update_parser
 from hermes_cli.subcommands.adopt import build_adopt_parser
+from hermes_cli.subcommands.dev import build_dev_parser
+from hermes_cli.subcommands.eject import build_eject_parser
 from hermes_cli.subcommands.uninstall import build_uninstall_parser
 from hermes_cli.subcommands.dashboard import build_dashboard_parser
 from hermes_cli.subcommands.gui import build_gui_parser
@@ -9430,6 +9432,16 @@ def cmd_adopt(args):
     _cmd_adopt_impl(args)
 
 
+def cmd_eject(args):
+    """Switch from a managed slot to a source checkout.
+
+    Delegates to ``hermes_cli.subcommands.eject.cmd_eject``.
+    """
+    from hermes_cli.subcommands.eject import cmd_eject as _cmd_eject_impl
+
+    _cmd_eject_impl(args)
+
+
 def cmd_update(args):
     """Update Hermes Agent to the latest version.
 
@@ -14715,6 +14727,11 @@ def main():
     # adopt command  (parser built in hermes_cli/subcommands/adopt.py)
     # =========================================================================
     build_adopt_parser(subparsers, cmd_adopt=cmd_adopt)
+
+    # =========================================================================
+    # eject command  (parser built in hermes_cli/subcommands/eject.py)
+    # =========================================================================
+    build_eject_parser(subparsers, cmd_eject=cmd_eject)
 
     # =========================================================================
     # uninstall command  (parser built in hermes_cli/subcommands/uninstall.py)
