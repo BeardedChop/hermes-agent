@@ -22,6 +22,8 @@ Both are exercised at runtime inside the real container image.
 """
 from __future__ import annotations
 
+import pytest
+
 from tests.docker.conftest import (
     docker_exec_sh,
     start_container,
@@ -61,6 +63,7 @@ def test_is_container_returns_true_in_image(
     )
 
 
+@pytest.mark.live_system_guard_bypass
 def test_hermes_update_refuses_in_container(
     built_image: str, container_name: str,
 ) -> None:
