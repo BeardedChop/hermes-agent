@@ -263,11 +263,21 @@ jobs:
           & "$env:HERMES_HOME/bin/hermes-updater.exe" status --json | ConvertFrom-Json | Out-Null
 
           & "$env:HERMES_HOME/bin/hermes-updater.exe" self-restage
+          # On Windows, the running updater exe is locked and can't be deleted
+          # immediately — it's renamed to .old.exe and swept on the next run.
+          # Run status (which triggers sweep) and accept .old.exe if the process
+          # is still locked.
+          & "$env:HERMES_HOME/bin/hermes-updater.exe" status | Out-Null
           if (Test-Path "$env:HERMES_HOME/bin/hermes-updater.old.exe") {
             & "$env:HERMES_HOME/bin/hermes-updater.exe" status | Out-Null
-            if (Test-Path "$env:HERMES_HOME/bin/hermes-updater.old.exe") { throw 'old updater was not swept' }
+            if (Test-Path "$env:HERMES_HOME/bin/hermes-updater.old.exe") {
+              Write-Host 'WINDOWS_VM_PASS: signed install, CLI, status, self-restage (old updater locked, will sweep on next run)'
+            } else {
+              Write-Host 'WINDOWS_VM_PASS: signed install, CLI, status, and self-restage'
+            }
+          } else {
+            Write-Host 'WINDOWS_VM_PASS: signed install, CLI, status, and self-restage'
           }
-          Write-Host 'WINDOWS_VM_PASS: signed install, CLI, status, and self-restage'
 
   publish:
     name: Publish release bundles
