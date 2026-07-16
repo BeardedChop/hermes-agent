@@ -29,7 +29,7 @@ import {
 import nodePty from 'node-pty'
 
 import { stopBackendChild as stopBackendChildImpl } from './backend-child'
-import { dashboardFallbackArgs, routeBackendSpawn, type BackendInstallType, sourceDeclaresServe } from './backend-command'
+import { type BackendInstallType, dashboardFallbackArgs, routeBackendSpawn, sourceDeclaresServe } from './backend-command'
 import { buildDesktopBackendEnv, normalizeHermesHomeRoot } from './backend-env'
 import { canImportHermesCli, verifyHermesCli } from './backend-probes'
 import { waitForDashboardPortAnnouncement } from './backend-ready'
@@ -1516,7 +1516,7 @@ function backendSupportsServe(backend) {
 
   _serveSupportCache.set(key, supported)
   rememberLog(
-    `[backend] \\`serve\\` ${supported ? 'supported' : 'unsupported → routing via legacy `dashboard`'} for ${backend.label || key}`
+    `[backend] \`serve\` ${supported ? 'supported' : 'unsupported → routing via legacy `dashboard`'} for ${backend.label || key}`
   )
 
   return supported
@@ -1974,6 +1974,16 @@ const schedulePersistWindowState = debounce(persistWindowState, 250)
 // Dev → SOURCE_REPO_ROOT. Packaged/CLI install → ACTIVE_HERMES_ROOT.
 // HERMES_DESKTOP_HERMES_ROOT always wins so devs can pin a worktree.
 function resolveUpdateRoot() {
+  try {
+    const current = fs.readFileSync(path.join(HERMES_HOME, 'current.txt'), 'utf8').trim()
+    const slotRoot = path.join(HERMES_HOME, 'versions', current, 'app')
+
+    if (current && fileExists(path.join(slotRoot, 'hermes_cli', '__init__.py'))) {
+      return slotRoot
+    }
+  } catch {
+    // Not a managed slot install; continue through checkout resolution.
+  }
   const candidates = [
     process.env.HERMES_DESKTOP_HERMES_ROOT && path.resolve(process.env.HERMES_DESKTOP_HERMES_ROOT),
     !IS_PACKAGED && isHermesSourceRoot(SOURCE_REPO_ROOT) ? SOURCE_REPO_ROOT : null,
@@ -2078,7 +2088,14 @@ async function runUpdaterStatusCheck(updaterBinary: string): Promise<unknown> {
     try {
       child = spawn(
         updaterBinary,
-        ['status', '--check', '--json'],
+        [
+          'status',
+          '--check',
+          '--json',
+          ...(process.env.HERMES_DESKTOP_UPDATE_SOURCE
+            ? ['--source', process.env.HERMES_DESKTOP_UPDATE_SOURCE]
+            : [])
+        ],
         hiddenWindowsChildOptions({
           cwd: HERMES_HOME,
           env: { ...process.env, HERMES_HOME },
@@ -2539,7 +2556,9 @@ async function applyUpdates(opts = {}) {
       directoryExists,
       fileExists
     })
-    const route = routeApplyDecision(installType)
+    // Internal E2E fixture hook. Production installs intentionally omit this
+    // and use the updater's canonical release endpoint.
+    const route = routeApplyDecision(installType, process.env.HERMES_DESKTOP_UPDATE_SOURCE)
 
     // -------------------------------------------------------------------
     // Slot: spawn hermes-updater apply, write marker, quit
@@ -2618,9 +2637,11 @@ async function applyUpdates(opts = {}) {
       rememberLog(`[updates] launched hermes-updater: ${updaterBinary} ${updaterArgs.join(' ')}; exiting desktop for handoff`)
 
       isQuittingForHandoff = true
-      setTimeout(() => {
-        app.quit()
-      }, UPDATE_HANDOFF_DWELL_MS)
+      if (!process.env.HERMES_DESKTOP_E2E_VERSION_FILE) {
+        setTimeout(() => {
+          app.quit()
+        }, UPDATE_HANDOFF_DWELL_MS)
+      }
 
       return { ok: true, handedOff: true, updater: updaterBinary }
     }
@@ -8674,6 +8695,18 @@ ipcMain.handle('hermes:version', async () => ({
   hermesRoot: resolveUpdateRoot(),
   installType: resolveInstallType(HERMES_HOME, ACTIVE_HERMES_ROOT, { directoryExists, fileExists })
 }))
+
+// The packaged updater E2E cannot retain Playwright's control pipe across the
+// updater-owned process relaunch. Report through the same version resolver as
+// the IPC handler so the test can prove the newly launched process is v2.
+if (process.env.HERMES_DESKTOP_E2E_VERSION_FILE) {
+  app.whenReady().then(() => {
+    fs.writeFileSync(
+      process.env.HERMES_DESKTOP_E2E_VERSION_FILE!,
+      `${JSON.stringify({ appVersion: resolveHermesVersion(), execPath: process.execPath })}\n`
+    )
+  })
+}
 
 // ===========================================================================
 // Uninstall — remove the Chat GUI (and optionally the agent / user data).

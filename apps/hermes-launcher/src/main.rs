@@ -37,7 +37,11 @@ fn main() -> anyhow::Result<()> {
             report,
         }) => apply(source, target_version, notify_file, relaunch_app, report),
         Some(Command::Rollback) => rollback(),
-        Some(Command::Status { check, json }) => status(check, json),
+        Some(Command::Status {
+            check,
+            json,
+            source,
+        }) => status(check, json, source),
         Some(Command::Adopt {
             from_checkout,
             source,
@@ -167,10 +171,34 @@ fn apply(
         notify_file.as_deref(),
     )?;
     if let Some(executable) = relaunch_app {
-        std::process::Command::new(executable).spawn()?;
+        let executable = resolve_relaunch_app(&home, &manifest.version, &executable);
+        std::process::Command::new(executable)
+            .env_remove("NODE_OPTIONS")
+            .env_remove("VSCODE_INSPECTOR_OPTIONS")
+            .env_remove("ELECTRON_RUN_AS_NODE")
+            .spawn()?;
     }
     println!("Updated Hermes to {}", manifest.version);
     Ok(())
+}
+
+fn resolve_relaunch_app(home: &std::path::Path, version: &str, executable: &str) -> PathBuf {
+    let executable = PathBuf::from(executable);
+    let versions = home.join("versions");
+    let Ok(relative) = executable.strip_prefix(&versions) else {
+        return executable;
+    };
+    let mut components = relative.components();
+    if components.next().is_none() {
+        return executable;
+    }
+    let suffix: PathBuf = components.collect();
+    let candidate = versions.join(version).join(suffix);
+    if candidate.is_file() {
+        candidate
+    } else {
+        executable
+    }
 }
 
 fn rollback() -> anyhow::Result<()> {
@@ -204,7 +232,11 @@ struct StatusReport {
     error: Option<String>,
 }
 
-fn status_report(hermes_home: &std::path::Path, check: bool) -> StatusReport {
+fn status_report(
+    hermes_home: &std::path::Path,
+    check: bool,
+    source: Option<String>,
+) -> StatusReport {
     let current = slots::resolve_current(hermes_home).unwrap_or(None);
     let previous = slots::resolve_previous(hermes_home).unwrap_or(None);
     let versions = hermes_home.join("versions");
@@ -241,7 +273,7 @@ fn status_report(hermes_home: &std::path::Path, check: bool) -> StatusReport {
         error: None,
     };
     if check {
-        match release_source(None).and_then(|source| source.history(&channel)) {
+        match release_source(source).and_then(|source| source.history(&channel)) {
             Ok(history) => {
                 report.latest_version = history.first().map(|item| item.version.clone());
                 report.target_sha = history.first().and_then(|item| item.target_sha.clone());
@@ -284,8 +316,8 @@ fn status_report(hermes_home: &std::path::Path, check: bool) -> StatusReport {
     report
 }
 
-fn status(check: bool, json: bool) -> anyhow::Result<()> {
-    let report = status_report(&hermes_home()?, check);
+fn status(check: bool, json: bool, source: Option<String>) -> anyhow::Result<()> {
+    let report = status_report(&hermes_home()?, check, source);
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
@@ -404,7 +436,7 @@ mod tests {
         )
         .unwrap();
 
-        let report = status_report(temp.path(), false);
+        let report = status_report(temp.path(), false, None);
         assert_eq!(report.current_version.as_deref(), Some("1.0.0"));
         assert_eq!(report.previous_version.as_deref(), Some("0.9.0"));
         assert_eq!(report.channel, "nightly");
@@ -415,6 +447,6 @@ mod tests {
     #[test]
     fn test_status_works() {
         // status is the one verb that isn't a stub — it prints a version line.
-        assert!(status(false, false).is_ok());
+        assert!(status(false, false, None).is_ok());
     }
 }

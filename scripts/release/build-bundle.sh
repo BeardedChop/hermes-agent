@@ -333,16 +333,16 @@ if [ "$INCLUDE_DESKTOP" = true ] && [ -d "$REPO_ROOT/apps/desktop" ]; then
     echo "==> Building desktop app..."
     DESKTOP_DIR="$REPO_ROOT/apps/desktop"
     (cd "$DESKTOP_DIR" && npm ci --ignore-scripts 2>/dev/null || npm install --ignore-scripts 2>/dev/null)
-    (cd "$DESKTOP_DIR" && CSC_IDENTITY_AUTO_DISCOVERY=false npm run pack 2>/dev/null) || {
-        echo "    WARN: desktop build failed — bundle will be valid without it" >&2
-    }
-    UNPACKED=$(find "$DESKTOP_DIR/release" -maxdepth 1 -name "*-unpacked" -type d 2>/dev/null | head -1)
+    (cd "$DESKTOP_DIR" && CSC_IDENTITY_AUTO_DISCOVERY=false npm run pack)
+    UNPACKED=$(find "$DESKTOP_DIR/release" -maxdepth 1 -type d \
+        \( -name "*-unpacked" -o -name "mac-*" \) 2>/dev/null | head -1)
     if [ -n "$UNPACKED" ]; then
         mkdir -p "$OUT_DIR/desktop"
         cp -r "$UNPACKED"/* "$OUT_DIR/desktop/"
         echo "    Desktop app staged"
     else
-        echo "    WARN: No unpacked desktop build found — bundle will lack desktop/" >&2
+        echo "ERROR: No packaged desktop build found" >&2
+        exit 1
     fi
 else
     echo "==> Skipping desktop build (--no-desktop or no apps/desktop)"
@@ -356,10 +356,12 @@ LAUNCHER_DIR="$REPO_ROOT/apps/hermes-launcher"
 (cd "$LAUNCHER_DIR" && cargo build --release --locked)
 if [ -f "$LAUNCHER_DIR/target/release/hermes.exe" ]; then
     cp "$LAUNCHER_DIR/target/release/hermes.exe" "$OUT_DIR/bin/hermes.exe"
+    cp "$LAUNCHER_DIR/target/release/hermes.exe" "$OUT_DIR/bin/hermes-updater.exe"
     BUNDLE_LAUNCHER="$OUT_DIR/bin/hermes.exe"
 else
     cp "$LAUNCHER_DIR/target/release/hermes" "$OUT_DIR/bin/hermes"
-    chmod +x "$OUT_DIR/bin/hermes"
+    cp "$LAUNCHER_DIR/target/release/hermes" "$OUT_DIR/bin/hermes-updater"
+    chmod +x "$OUT_DIR/bin/hermes" "$OUT_DIR/bin/hermes-updater"
     BUNDLE_LAUNCHER="$OUT_DIR/bin/hermes"
 fi
 

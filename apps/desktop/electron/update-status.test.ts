@@ -193,6 +193,13 @@ test('routeApplyDecision: slot routes to updater handoff', () => {
   assert.ok(route.args.includes('{notifyFile}'), 'args include the notifyFile placeholder')
 })
 
+test('routeApplyDecision: slot forwards an internal fixture release source', () => {
+  const route = routeApplyDecision('slot', 'file:///tmp/releases')
+
+  assert.equal(route.route, 'updater')
+  assert.deepEqual(route.args.slice(0, 4), ['apply', '--source', 'file:///tmp/releases', '--relaunch-app'])
+})
+
 test('routeApplyDecision: checkout routes to dev-update (hermes update)', () => {
   const route = routeApplyDecision('checkout')
 

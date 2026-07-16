@@ -1,200 +1,115 @@
 #!/usr/bin/env bash
-#
-# Phase 4 task 4.5: E2E gate — desktop update via updater (POSIX).
-#
-# Using the phase-1 fixture release server with v1/v2 bundles (desktop
-# included): install v1 → launch the packaged app (xvfb) → poke the
-# update check IPC → apply → assert the app exits, the updater flips,
-# and the relaunched app's getVersion() reports v2.
-#
-# Requires: xvfb, the hermes-launcher binary, a file:// bundle fixture
-# with desktop/ included.
-#
-# Usage: bash scripts/e2e/test-desktop-update.sh
-
+# Real packaged Electron updater gate: signed file:// v1 -> v2 under xvfb.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+DESKTOP="$REPO_ROOT/apps/desktop"
 LAUNCHER_DIR="$REPO_ROOT/apps/hermes-launcher"
+UV="${UV:-$(command -v uv || true)}"
+XVFB_RUN="${XVFB_RUN:-$(command -v xvfb-run || true)}"
 
-# Find the launcher binary
-LAUNCHER=""
-for candidate in \
-    "$LAUNCHER_DIR/target/debug/hermes" \
-    "$LAUNCHER_DIR/target/release/hermes"; do
-    if [ -x "$candidate" ]; then
-        LAUNCHER="$candidate"
-        break
+[ -n "$UV" ] || { echo "ERROR: uv is required" >&2; exit 1; }
+[ -n "$XVFB_RUN" ] || { echo "ERROR: xvfb-run is required" >&2; exit 1; }
+
+WORK=$(mktemp -d)
+export HERMES_HOME="$WORK/home"
+export HERMES_DESKTOP_E2E_RELEASES="$WORK/releases"
+mkdir -p "$HERMES_HOME" "$HERMES_DESKTOP_E2E_RELEASES"
+cleanup() {
+    pkill -f "HermesUpdaterE2E-$PPID" 2>/dev/null || true
+    chmod -R u+w "$WORK" 2>/dev/null || true
+    rm -rf "$WORK"
+}
+trap cleanup EXIT
+
+PLATFORM=$(
+    case "$(uname -s)-$(uname -m)" in
+        Linux-x86_64) echo linux-x64 ;;
+        Linux-aarch64|Linux-arm64) echo linux-arm64 ;;
+        *) echo "unsupported desktop E2E platform: $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+    esac
+)
+
+readarray -t KEYS < <("$UV" run --with pynacl python - <<'PY'
+import base64
+from nacl.signing import SigningKey
+key = SigningKey.generate()
+print(base64.b64encode(bytes(key)).decode())
+print(base64.b64encode(bytes(key.verify_key)).decode())
+PY
+)
+SIGNING_KEY="${KEYS[0]}"
+PUBLIC_KEY="${KEYS[1]}"
+
+printf '==> building updater with ephemeral E2E trust key\n'
+(
+    cd "$LAUNCHER_DIR"
+    if grep -qi '^ID=nixos' /etc/os-release 2>/dev/null; then
+        HERMES_RELEASE_PUBLIC_KEY="$PUBLIC_KEY" nix shell nixpkgs#gcc nixpkgs#openssl -c cargo build --quiet
+    else
+        HERMES_RELEASE_PUBLIC_KEY="$PUBLIC_KEY" cargo build --quiet
     fi
-done
+)
+LAUNCHER="$LAUNCHER_DIR/target/debug/hermes"
+BOOTSTRAP="$WORK/hermes-updater"
+cp "$LAUNCHER" "$BOOTSTRAP"
+chmod +x "$BOOTSTRAP"
 
-# Create temp directories
-export HERMES_HOME=$(mktemp -d)
-FIXTURE_DIR=$(mktemp -d)
-trap 'rm -rf "$HERMES_HOME" "$FIXTURE_DIR"' EXIT
+printf '==> building the real packaged Electron app\n'
+PACKAGED="$DESKTOP/release/linux-unpacked"
+if [ ! -x "$PACKAGED/Hermes" ]; then
+    npm run --prefix "$DESKTOP" pack
+fi
+[ -x "$PACKAGED/Hermes" ] || { echo "ERROR: packaged Hermes binary missing" >&2; exit 1; }
 
-echo "==> Temp HERMES_HOME: $HERMES_HOME"
-echo "==> Fixture dir: $FIXTURE_DIR"
-echo "==> Launcher: ${LAUNCHER:-not found}"
+make_bundle() {
+    local version="$1"
+    local tree="$WORK/bundle-$version"
+    local version_dir="$HERMES_DESKTOP_E2E_RELEASES/$version"
+    rm -rf "$tree"
+    mkdir -p "$tree/bin" "$tree/runtime/venv/bin" "$tree/runtime/tools" \
+        "$tree/runtime/node/bin" "$tree/runtime/python/bin" "$tree/app/hermes_cli" \
+        "$tree/ui/tui/dist" "$tree/ui/web/dist" "$tree/desktop" "$version_dir"
 
-# ─── Create fixture bundles with desktop ─────────────────────────────
-
-create_desktop_bundle() {
-    local dir="$1"
-    local version="$2"
-
-    mkdir -p "$dir/bin" "$dir/runtime/venv/bin" "$dir/app" "$dir/desktop"
-
-    # Launcher shim
-    cat > "$dir/bin/hermes" << STUB
+    cp "$LAUNCHER" "$tree/bin/hermes"
+    chmod +x "$tree/bin/hermes"
+    cp -a "$PACKAGED/." "$tree/desktop/"
+    printf '__version__ = "%s"\n' "$version" > "$tree/app/hermes_cli/__init__.py"
+    printf '%s\n' "$version" > "$tree/VERSION"
+    printf 'tui\n' > "$tree/ui/tui/dist/entry.js"
+    printf 'web\n' > "$tree/ui/web/dist/index.html"
+    cat > "$tree/runtime/venv/bin/python" <<'PY'
 #!/bin/sh
-echo "hermes $version"
-STUB
-    chmod +x "$dir/bin/hermes"
+exit 0
+PY
+    chmod +x "$tree/runtime/venv/bin/python"
 
-    # Fake python
-    echo "#!/bin/sh" > "$dir/runtime/venv/bin/python"
-    chmod +x "$dir/runtime/venv/bin/python"
-
-    # Fake desktop app (just a stamp file)
-    echo "desktop app version $version" > "$dir/desktop/version.txt"
-
-    # Fake source
-    echo "# fake source" > "$dir/app/run_agent.py"
-
-    # Manifest
-    python3 -c "
-import json, hashlib, os
-files = {}
-for root, dirs, filenames in os.walk('$dir'):
-    for f in filenames:
-        path = os.path.join(root, f)
-        rel = os.path.relpath(path, '$dir')
-        if rel in ('manifest.json',): continue
-        h = hashlib.sha256(open(path, 'rb').read()).hexdigest()
-        files[rel] = f'sha256:{h}'
-manifest = {'schema': 1, 'version': '$version', 'channel': 'stable',
-            'git_sha': 'a'*40, 'platform': 'linux-x64',
-            'min_updater_version': '0.1.0', 'desktop': True, 'files': files}
-open(os.path.join('$dir', 'manifest.json'), 'w').write(json.dumps(manifest, indent=2) + '\n')
-"
+    "$UV" run --with pynacl python "$REPO_ROOT/scripts/release/write-manifest.py" \
+        --bundle-dir "$tree" --version "$version" --channel stable \
+        --git-sha "$(printf 'a%.0s' {1..40})" --platform "$PLATFORM" \
+        --signing-key "$SIGNING_KEY" >/dev/null
+    cp "$tree/manifest.json" "$tree/manifest.json.sig" "$version_dir/"
+    local normalized="$WORK/normalize-$version"
+    rm -rf "$normalized"
+    mkdir -p "$normalized/bundle"
+    cp -a "$tree/." "$normalized/bundle/"
+    tar --zstd -cf "$version_dir/hermes-$version-$PLATFORM.tar.zst" -C "$normalized" bundle
 }
 
-echo "==> Creating fixture bundles..."
-create_desktop_bundle "$FIXTURE_DIR/v1" "1.0.0"
-create_desktop_bundle "$FIXTURE_DIR/v2" "2.0.0"
-echo "stable" > "$FIXTURE_DIR/latest-stable.txt"
+printf '==> creating and installing signed v1 bundle\n'
+make_bundle 1.0.0
+printf '1.0.0\n' > "$HERMES_DESKTOP_E2E_RELEASES/latest-stable.txt"
+"$BOOTSTRAP" install --source "file://$HERMES_DESKTOP_E2E_RELEASES" --channel stable
 
-# ─── Test 1: Install v1 ─────────────────────────────────────────────
+printf '==> publishing signed v2 bundle\n'
+make_bundle 2.0.0
+printf '2.0.0\n' > "$HERMES_DESKTOP_E2E_RELEASES/latest-stable.txt"
 
-echo ""
-echo "=== Test 1: Install v1 ==="
+printf '==> launching packaged v1 and driving update IPC with Playwright\n'
+"$XVFB_RUN" -a node "$DESKTOP/e2e/desktop-update.mjs"
 
-if [ -z "$LAUNCHER" ]; then
-    echo "  SKIP: launcher not built"
-    echo "  Build it: cd $LAUNCHER_DIR && nix shell nixpkgs#gcc nixpkgs#openssl -c cargo build"
-    exit 0
-fi
-
-# Simulate install: copy bundle to slot, flip
-mkdir -p "$HERMES_HOME/versions"
-cp -r "$FIXTURE_DIR/v1" "$HERMES_HOME/versions/1.0.0"
-echo "1.0.0" > "$HERMES_HOME/current.txt"
-echo "  PASS: v1 installed, current.txt = 1.0.0"
-
-# ─── Test 2: Verify desktop is in the slot ──────────────────────────
-
-echo ""
-echo "=== Test 2: Verify desktop in slot ==="
-if [ -f "$HERMES_HOME/versions/1.0.0/desktop/version.txt" ]; then
-    echo "  PASS: desktop/version.txt exists"
-    cat "$HERMES_HOME/versions/1.0.0/desktop/version.txt"
-else
-    echo "  FAIL: desktop/ not in slot"
-    exit 1
-fi
-
-# ─── Test 3: Apply update to v2 ─────────────────────────────────────
-
-echo ""
-echo "=== Test 3: Apply update to v2 ==="
-
-# Simulate the apply flow: stage v2, commit, flip
-STAGING="$HERMES_HOME/versions/2.0.0.staging"
-cp -r "$FIXTURE_DIR/v2" "$STAGING"
-mv "$STAGING" "$HERMES_HOME/versions/2.0.0"
-
-# Flip
-echo "1.0.0" > "$HERMES_HOME/previous.txt"
-echo "2.0.0" > "$HERMES_HOME/current.txt"
-
-CURRENT=$(cat "$HERMES_HOME/current.txt")
-PREVIOUS=$(cat "$HERMES_HOME/previous.txt")
-if [ "$CURRENT" = "2.0.0" ] && [ "$PREVIOUS" = "1.0.0" ]; then
-    echo "  PASS: flipped to v2, previous=v1"
-else
-    echo "  FAIL: current=$CURRENT, previous=$PREVIOUS"
-    exit 1
-fi
-
-# ─── Test 4: New desktop version in slot ─────────────────────────────
-
-echo ""
-echo "=== Test 4: New desktop version ==="
-V2_DESKTOP=$(cat "$HERMES_HOME/versions/2.0.0/desktop/version.txt")
-V1_DESKTOP=$(cat "$HERMES_HOME/versions/1.0.0/desktop/version.txt")
-if [ "$V2_DESKTOP" != "$V1_DESKTOP" ]; then
-    echo "  PASS: desktop version changed ($V1_DESKTOP → $V2_DESKTOP)"
-else
-    echo "  FAIL: desktop version unchanged"
-    exit 1
-fi
-
-# ─── Test 5: Rollback restores old desktop ──────────────────────────
-
-echo ""
-echo "=== Test 5: Rollback ==="
-echo "1.0.0" > "$HERMES_HOME/current.txt"
-echo "2.0.0" > "$HERMES_HOME/previous.txt"
-
-CURRENT=$(cat "$HERMES_HOME/current.txt")
-ROLLED_DESKTOP=$(cat "$HERMES_HOME/versions/1.0.0/desktop/version.txt")
-if [ "$CURRENT" = "1.0.0" ] && [ "$ROLLED_DESKTOP" = "$V1_DESKTOP" ]; then
-    echo "  PASS: rollback restored v1 desktop"
-else
-    echo "  FAIL: rollback didn't restore old desktop"
-    exit 1
-fi
-
-# ─── Test 6: Marker file lifecycle ──────────────────────────────────
-
-echo ""
-echo "=== Test 6: Marker file lifecycle ==="
-MARKER="$HERMES_HOME/.hermes-update-in-progress"
-# During the flip, the marker should be present
-echo '{"pid": 12345, "started_at": "2026-07-15T21:00:00Z"}' > "$MARKER"
-if [ -f "$MARKER" ]; then
-    echo "  PASS: marker created during flip"
-else
-    echo "  FAIL: marker not created"
-    exit 1
-fi
-# After the flip completes, the marker should be cleaned
-rm -f "$MARKER"
-if [ ! -f "$MARKER" ]; then
-    echo "  PASS: marker cleaned after flip"
-else
-    echo "  FAIL: marker not cleaned"
-    exit 1
-fi
-
-echo ""
-echo "========================================"
-echo "  E2E_PASS — desktop update via updater!"
-echo "========================================"
-echo ""
-echo "  NOTE: Full desktop E2E (launching the actual Electron app via"
-echo "  xvfb + playwright) requires the electron-playwright-e2e harness."
-echo "  This script tests the slot lifecycle + desktop artifact presence."
-echo "  The full app-launch test is a nightly CI job (slow)."
+[ "$(cat "$HERMES_HOME/current.txt")" = "2.0.0" ]
+[ "$(cat "$HERMES_HOME/previous.txt")" = "1.0.0" ]
+[ ! -e "$HERMES_HOME/.hermes-update-in-progress" ]
+printf 'E2E_PASS: packaged Electron applied signed update and relaunched v2\n'

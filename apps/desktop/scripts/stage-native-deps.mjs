@@ -287,6 +287,9 @@ export function stageNodePtyInto(srcRoot, destRoot, { platform = process.platfor
       '-f',
       '-w',
       'node-pty',
+      '--module-dir',
+      resolve(projectRoot, '../..'),
+      '--build-from-source',
       '--arch',
       arch
     ]

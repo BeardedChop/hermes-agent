@@ -193,13 +193,22 @@ export type ApplyRoute =
  * command and its core args; the caller fills in `execPath` and `tmp`
  * (which require process/app context the pure function doesn't have).
  */
-export function routeApplyDecision(installType: InstallType): ApplyRoute {
+export function routeApplyDecision(installType: InstallType, releaseSource?: string): ApplyRoute {
   switch (installType) {
     case 'slot':
       return {
         route: 'updater',
         command: 'hermes-updater',
-        args: ['apply', '--relaunch-app', '{execPath}', '--report', 'json', '--notify-file', '{notifyFile}']
+        args: [
+          'apply',
+          ...(releaseSource ? ['--source', releaseSource] : []),
+          '--relaunch-app',
+          '{execPath}',
+          '--report',
+          'json',
+          '--notify-file',
+          '{notifyFile}'
+        ]
       }
 
     case 'checkout':
