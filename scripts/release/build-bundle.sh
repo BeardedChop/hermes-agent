@@ -37,8 +37,31 @@ elif command -v uv >/dev/null 2>&1; then
 else
     UV="$HOME/.hermes/bin/uv"
 fi
-PYTHON_VERSION="3.11"
-NODE_VERSION="22"
+RUNTIME_DEPS="$REPO_ROOT/runtime-deps.json"
+if [ ! -f "$RUNTIME_DEPS" ]; then
+    echo "ERROR: runtime dependency manifest not found: $RUNTIME_DEPS" >&2
+    exit 1
+fi
+PYTHON_VERSION=$(python3 - "$RUNTIME_DEPS" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+if manifest.get("schema") != 1:
+    raise SystemExit("unsupported runtime-deps.json schema")
+print(manifest["python"]["version"])
+PY
+)
+NODE_VERSION=$(python3 - "$RUNTIME_DEPS" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+if manifest.get("schema") != 1:
+    raise SystemExit("unsupported runtime-deps.json schema")
+print(manifest["node"]["version"])
+PY
+)
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -161,35 +184,50 @@ NODE_ARCH="x64"
 case "$ARCH" in
     x86_64)        NODE_ARCH="x64"    ;;
     aarch64|arm64) NODE_ARCH="arm64"  ;;
-    *) echo "WARN: Unsupported arch $ARCH for Node — skipping" >&2 ;;
+    *) echo "ERROR: Unsupported arch $ARCH for Node" >&2; exit 1 ;;
 esac
 NODE_OS="linux"
 case "$(uname -s)" in
     Linux)  NODE_OS="linux"  ;;
     Darwin) NODE_OS="darwin" ;;
-    *) echo "WARN: Unsupported OS for Node — skipping" >&2 ;;
+    MINGW*|MSYS*|CYGWIN*) NODE_OS="win" ;;
+    *) echo "ERROR: Unsupported OS for Node" >&2; exit 1 ;;
 esac
 
 if [ -n "$NODE_ARCH" ] && [ -n "$NODE_OS" ]; then
     INDEX_URL="https://nodejs.org/dist/latest-v${NODE_VERSION}.x/"
-    TARBALL=$(curl -fsSL "$INDEX_URL" 2>/dev/null \
-        | grep -oE "node-v${NODE_VERSION}\.[0-9]+\.[0-9]+-${NODE_OS}-${NODE_ARCH}\.tar\.xz" \
-        | head -1)
-    if [ -z "$TARBALL" ]; then
+    if [ "$NODE_OS" = "win" ]; then
         TARBALL=$(curl -fsSL "$INDEX_URL" 2>/dev/null \
-            | grep -oE "node-v${NODE_VERSION}\.[0-9]+\.[0-9]+-${NODE_OS}-${NODE_ARCH}\.tar\.gz" \
+            | grep -oE "node-v${NODE_VERSION}\.[0-9]+\.[0-9]+-win-${NODE_ARCH}\.zip" \
             | head -1)
+    else
+        TARBALL=$(curl -fsSL "$INDEX_URL" 2>/dev/null \
+            | grep -oE "node-v${NODE_VERSION}\.[0-9]+\.[0-9]+-${NODE_OS}-${NODE_ARCH}\.tar\.xz" \
+            | head -1)
+        if [ -z "$TARBALL" ]; then
+            TARBALL=$(curl -fsSL "$INDEX_URL" 2>/dev/null \
+                | grep -oE "node-v${NODE_VERSION}\.[0-9]+\.[0-9]+-${NODE_OS}-${NODE_ARCH}\.tar\.gz" \
+                | head -1)
+        fi
     fi
     if [ -n "$TARBALL" ]; then
         DOWNLOAD_URL="https://nodejs.org/dist/latest-v${NODE_VERSION}.x/$TARBALL"
         echo "    Downloading $TARBALL..."
         TMP_TAR=$(mktemp)
         curl -fsSL "$DOWNLOAD_URL" -o "$TMP_TAR"
-        tar -xf "$TMP_TAR" -C "$NODE_DIR" --strip-components=1
+        if [[ "$TARBALL" == *.zip ]]; then
+            NODE_UNPACK=$(mktemp -d)
+            python3 -m zipfile -e "$TMP_TAR" "$NODE_UNPACK"
+            cp -r "$NODE_UNPACK"/*/* "$NODE_DIR/"
+            rm -rf "$NODE_UNPACK"
+        else
+            tar -xf "$TMP_TAR" -C "$NODE_DIR" --strip-components=1
+        fi
         rm -f "$TMP_TAR"
         echo "    Node staged at $NODE_DIR"
     else
-        echo "WARN: Could not find Node.js $NODE_VERSION tarball — skipping" >&2
+        echo "ERROR: Could not find Node.js $NODE_VERSION tarball" >&2
+        exit 1
     fi
 fi
 
@@ -198,13 +236,59 @@ fi
 echo "==> [6/7] Staging bundled native CLIs (ripgrep)..."
 TOOLS_DIR="$OUT_DIR/runtime/tools"
 mkdir -p "$TOOLS_DIR"
-# Ripgrep: use system rg if available (it's a static binary on most distros)
-if command -v rg &>/dev/null; then
-    cp "$(command -v rg)" "$TOOLS_DIR/rg"
-    echo "    rg copied from $(command -v rg)"
+RUNTIME_OS="linux"
+case "$(uname -s)" in
+    Linux) RUNTIME_OS="linux" ;;
+    Darwin) RUNTIME_OS="darwin" ;;
+    MINGW*|MSYS*|CYGWIN*) RUNTIME_OS="win" ;;
+    *) echo "ERROR: Unsupported ripgrep OS: $(uname -s)" >&2; exit 1 ;;
+esac
+RUNTIME_ARCH="x64"
+case "$(uname -m)" in
+    x86_64|amd64) RUNTIME_ARCH="x64" ;;
+    aarch64|arm64) RUNTIME_ARCH="arm64" ;;
+    *) echo "ERROR: Unsupported ripgrep architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+RUNTIME_PLATFORM="${RUNTIME_OS}-${RUNTIME_ARCH}"
+RG_METADATA=$(python3 - "$RUNTIME_DEPS" "$RUNTIME_PLATFORM" <<'PY'
+import json
+import sys
+
+artifact = json.load(open(sys.argv[1], encoding="utf-8"))["ripgrep"]["platforms"][sys.argv[2]]
+print(artifact["url"])
+print(artifact["sha256"])
+PY
+)
+RG_URL=$(printf '%s\n' "$RG_METADATA" | sed -n '1p')
+RG_SHA256=$(printf '%s\n' "$RG_METADATA" | sed -n '2p')
+RG_ARCHIVE=$(mktemp)
+RG_UNPACK=$(mktemp -d)
+curl -fsSL "$RG_URL" -o "$RG_ARCHIVE"
+python3 - "$RG_ARCHIVE" "$RG_SHA256" <<'PY'
+import hashlib
+import sys
+
+actual = hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest()
+if actual != sys.argv[2]:
+    raise SystemExit(f"ripgrep checksum mismatch: expected {sys.argv[2]}, got {actual}")
+PY
+if [[ "$RG_URL" == *.zip ]]; then
+    python3 -m zipfile -e "$RG_ARCHIVE" "$RG_UNPACK"
 else
-    echo "    WARN: rg not found on system — bundle will lack ripgrep" >&2
+    tar -xf "$RG_ARCHIVE" -C "$RG_UNPACK"
 fi
+RG_BINARY=$(find "$RG_UNPACK" -type f \( -name rg -o -name rg.exe \) | head -1)
+if [ -z "$RG_BINARY" ]; then
+    echo "ERROR: ripgrep archive contains no rg binary" >&2
+    exit 1
+fi
+if [[ "$RUNTIME_OS" == "win" ]]; then
+    cp "$RG_BINARY" "$TOOLS_DIR/rg.exe"
+else
+    cp "$RG_BINARY" "$TOOLS_DIR/rg"
+    chmod +x "$TOOLS_DIR/rg"
+fi
+rm -rf "$RG_ARCHIVE" "$RG_UNPACK"
 
 # ─── ui/ — pre-built TUI + web ────────────────────────────────────────
 
@@ -215,14 +299,15 @@ TUI_DIR="$REPO_ROOT/ui-tui"
 if [ -d "$TUI_DIR" ]; then
     echo "    Building TUI..."
     (cd "$TUI_DIR" && npm ci --ignore-scripts 2>/dev/null || npm install --ignore-scripts 2>/dev/null)
-    (cd "$TUI_DIR" && npm run build 2>/dev/null) || echo "    WARN: TUI build failed" >&2
+    (cd "$TUI_DIR" && npm run build)
     if [ -d "$TUI_DIR/dist" ]; then
         mkdir -p "$OUT_DIR/ui/tui"
         cp -r "$TUI_DIR/dist" "$OUT_DIR/ui/tui/dist"
         echo "    TUI dist staged"
     fi
 else
-    echo "    WARN: ui-tui/ not found — skipping TUI build" >&2
+    echo "ERROR: ui-tui/ not found" >&2
+    exit 1
 fi
 
 # Web dashboard build
@@ -230,7 +315,7 @@ WEB_DIR="$REPO_ROOT/web"
 if [ -d "$WEB_DIR" ]; then
     echo "    Building web dashboard..."
     (cd "$WEB_DIR" && npm ci --ignore-scripts 2>/dev/null || npm install --ignore-scripts 2>/dev/null)
-    (cd "$WEB_DIR" && npm run build 2>/dev/null) || echo "    WARN: web build failed" >&2
+    (cd "$WEB_DIR" && npm run build)
     WEB_DIST="$REPO_ROOT/hermes_cli/web_dist"
     if [ -d "$WEB_DIST" ]; then
         mkdir -p "$OUT_DIR/ui/web"
@@ -238,7 +323,8 @@ if [ -d "$WEB_DIR" ]; then
         echo "    Web dist staged"
     fi
 else
-    echo "    WARN: web/ not found — skipping web build" >&2
+    echo "ERROR: web/ not found" >&2
+    exit 1
 fi
 
 # ─── desktop/ — pre-built electron app (optional) ──────────────────────

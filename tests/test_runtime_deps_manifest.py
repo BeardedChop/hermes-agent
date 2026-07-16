@@ -86,3 +86,9 @@ class TestDepEntries:
     def test_ripgrep_entry_present(self, manifest):
         assert "ripgrep" in manifest
         assert manifest["ripgrep"].get("bundled") is True
+        assert manifest["ripgrep"].get("version")
+        platforms = manifest["ripgrep"].get("platforms", {})
+        assert platforms
+        for artifact in platforms.values():
+            assert artifact["url"].startswith("https://")
+            assert re.fullmatch(r"[0-9a-f]{64}", artifact["sha256"])
