@@ -29,7 +29,7 @@ import {
 import nodePty from 'node-pty'
 
 import { stopBackendChild as stopBackendChildImpl } from './backend-child'
-import { dashboardFallbackArgs, sourceDeclaresServe } from './backend-command'
+import { dashboardFallbackArgs, routeBackendSpawn, type BackendInstallType, sourceDeclaresServe } from './backend-command'
 import { buildDesktopBackendEnv, normalizeHermesHomeRoot } from './backend-env'
 import { canImportHermesCli, verifyHermesCli } from './backend-probes'
 import { waitForDashboardPortAnnouncement } from './backend-ready'
@@ -1525,16 +1525,39 @@ function backendSupportsServe(backend) {
 
   _serveSupportCache.set(key, supported)
   rememberLog(
-    `[backend] \`serve\` ${supported ? 'supported' : 'unsupported → routing via legacy `dashboard`'} for ${backend.label || key}`
+    `[backend] \\`serve\\` ${supported ? 'supported' : 'unsupported → routing via legacy `dashboard`'} for ${backend.label || key}`
   )
 
   return supported
 }
 
+/**
+ * Determine the install type for a resolved backend. A slot install's `root`
+ * points at ACTIVE_HERMES_ROOT (the managed install under $HERMES_HOME) — the
+ * stable launcher resolves current.txt and the env, so the child is always
+ * `hermes serve …`. Everything else (dev checkout, PATH-resolved hermes, a
+ * source override) is a checkout: the runtime may predate `serve`, so keep
+ * the sniff.
+ */
+function resolveBackendInstallType(backend): BackendInstallType {
+  if (backend && backend.root && path.resolve(backend.root) === path.resolve(ACTIVE_HERMES_ROOT)) {
+    return 'slot'
+  }
+
+  return 'checkout'
+}
+
 // Given a resolved backend whose args target `serve`, return the args the
-// runtime actually understands: unchanged when `serve` is supported, or
-// rewritten to `dashboard --no-open` for older runtimes.
+// runtime actually understands. For slot installs the stable launcher always
+// supports `serve`, so we skip the sniff entirely. For checkout installs we
+// still probe (legacy checkouts may predate `serve`).
 function getBackendArgsForRuntime(backend) {
+  const { alwaysServe } = routeBackendSpawn(resolveBackendInstallType(backend))
+
+  if (alwaysServe) {
+    return backend.args
+  }
+
   return backendSupportsServe(backend) ? backend.args : dashboardFallbackArgs(backend.args)
 }
 
