@@ -43,6 +43,12 @@ pub fn adopt(
     let version = manifest.version;
     let slot = hermes_home.join("versions").join(&version);
     apply::activate_stable_launchers(hermes_home, &version)?;
+    if let Err(error) = apply::apply_feature_ledger(hermes_home, &version) {
+        eprintln!("warning: feature ledger application failed: {error:#}");
+    }
+    if let Err(error) = crate::services::restart_gateway(hermes_home) {
+        eprintln!("warning: gateway restart failed: {error:#}");
+    }
 
     let launcher = hermes_home.join("bin").join(if cfg!(windows) {
         "hermes.exe"
