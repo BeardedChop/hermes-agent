@@ -45,11 +45,11 @@ This is an implementation checklist, not a record that the phases are complete. 
 
 ### Updater atomicity and lifecycle
 
-- [ ] Implement real updater mutual exclusion and acquire it before the commit point.
-  - `apply_release()` commits/flips at `apps/hermes-launcher/src/apply.rs:51-52`; `UpdateMarker` is acquired afterward at `main.rs:148,282`.
-  - `UpdateMarker::acquire()` uses ordinary `fs::write` at `apply.rs:114-122`, so concurrent updaters overwrite one another instead of acquiring an exclusive lock.
-  - Use create-new/atomic acquisition, validate PID+age, reclaim stale owners, and hold through flip, restage, restart, and notification.
-  - Add concurrent-apply and stale-owner tests.
+- [x] Implement real updater mutual exclusion and acquire it before the commit point.
+  - `UpdateMarker::acquire()` now uses atomic create-new (`O_CREAT|O_EXCL`) instead of `fs::write`; concurrent updaters get an error instead of overwriting each other.
+  - Stale marker reclamation: checks owner PID (`kill(pid,0)` on Unix, `OpenProcess` on Windows) and age (>10min); reclaims if dead/stale, refuses if active.
+  - Marker acquisition moved BEFORE `apply_release()` in `main.rs` so the entire download→verify→stage→preflight→commit→flip→restart→notify critical section is mutually exclusive.
+  - Tests: `update_marker_rejects_concurrent_acquisition` + `update_marker_reclaims_stale_pid`.
   - Spec: `02-phase1-updater.md:171-175`; `docs/updater-world.md:524-528`.
 
 - [ ] Wire `min_updater_version` and the bootstrap hop into production apply.
