@@ -1,4 +1,5 @@
 mod cli;
+mod launch;
 mod tree;
 
 use cli::Command;
@@ -31,8 +32,8 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-fn launch(_args: Vec<String>) -> anyhow::Result<()> {
-    todo!("launch: resolve tree → build env → exec venv python (task 1.2)")
+fn launch(args: Vec<String>) -> anyhow::Result<()> {
+    launch::launch(args)
 }
 
 fn install(_source: Option<String>, _channel: String) -> anyhow::Result<()> {
