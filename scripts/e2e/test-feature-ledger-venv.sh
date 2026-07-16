@@ -61,10 +61,11 @@ SYSTEM_PYTHON=$(command -v python3)
 "$V1/bin/python" - <<'PY'
 from tools.lazy_deps import ensure
 ensure('tts.edge', prompt=False)
-import edge_tts
-assert edge_tts.E2E_MARKER == 'ledger-restored'
+# Record the feature in the ledger so apply_ledger can replay it.
 PY
-"$V1/bin/python" -c 'import edge_tts'
+# Verify the install landed in a fresh v1 process (importlib.metadata
+# can be stale in the process that ran the install on Python 3.12).
+"$V1/bin/python" -c 'import edge_tts; assert edge_tts.E2E_MARKER == "ledger-restored"'
 if "$V2/bin/python" -c 'import edge_tts' 2>/dev/null; then
     echo 'replacement venv unexpectedly already contains the feature' >&2
     exit 1
