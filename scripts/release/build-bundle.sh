@@ -30,7 +30,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 OUT_DIR="${OUT_DIR:-dist/bundle}"
 INCLUDE_DESKTOP=true
-UV="${UV:-$HOME/.hermes/bin/uv}"
+if [ -n "${UV:-}" ]; then
+    UV="$UV"
+elif command -v uv >/dev/null 2>&1; then
+    UV="$(command -v uv)"
+else
+    UV="$HOME/.hermes/bin/uv"
+fi
 PYTHON_VERSION="3.11"
 NODE_VERSION="22"
 
