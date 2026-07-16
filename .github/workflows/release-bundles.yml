@@ -177,7 +177,7 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ matrix.os }}" == "win" ]]; then
-            7z a -tzip "dist/hermes-${{ steps.version.outputs.version }}-${{ matrix.platform }}.zip" dist/bundle/
+            cd dist && 7z a -tzip "hermes-${{ steps.version.outputs.version }}-${{ matrix.platform }}.zip" bundle/ && cd ..
             echo "artifact=dist/hermes-${{ steps.version.outputs.version }}-${{ matrix.platform }}.zip" >> $GITHUB_OUTPUT
           else
             tar --zstd -cf "dist/hermes-${{ steps.version.outputs.version }}-${{ matrix.platform }}.tar.zst" -C dist bundle/
@@ -249,8 +249,8 @@ jobs:
           New-Item -ItemType Directory -Force $versionDir, $unpacked | Out-Null
           Expand-Archive $archive.FullName $unpacked
           Copy-Item $archive.FullName (Join-Path $versionDir $archive.Name)
-          Copy-Item "$unpacked/dist/bundle/manifest.json" $versionDir
-          Copy-Item "$unpacked/dist/bundle/manifest.json.sig" $versionDir
+          Copy-Item "$unpacked/bundle/manifest.json" $versionDir
+          Copy-Item "$unpacked/bundle/manifest.json.sig" $versionDir
           Set-Content (Join-Path $source latest-stable.txt) $version
 
           $env:HERMES_HOME = Join-Path $env:RUNNER_TEMP hermes-home
