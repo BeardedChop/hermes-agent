@@ -80,6 +80,28 @@ FROZEN_CALLABLES: dict[str, str] = {
         "(env: dict[str, str] | None = None) -> dict[str, str]"
     ),
     "hermes_constants:display_hermes_home": "() -> str",
+
+    # ── Additional post-pull symbols discovered by archaeology ──
+    # These are called post-pull but were not in the initial §2.13 list.
+    # Added after a full _cmd_update_impl audit (subagent archaeology).
+
+    # backup.py — snapshot + cron safety net
+    "hermes_cli.backup:create_quick_snapshot": (
+        "(label: Optional[str] = None, hermes_home: Optional[pathlib.Path] = None, "
+        "keep: Optional[int] = None) -> Optional[str]"
+    ),
+    "hermes_cli.backup:restore_cron_jobs_if_emptied": (
+        "(snapshot_id: str, hermes_home: Optional[pathlib.Path] = None) -> Optional[Dict[str, Any]]"
+    ),
+
+    # config.py — install method detection (used in the no-.git branch)
+    "hermes_cli.config:detect_install_method": "(project_root: Optional[pathlib.Path] = None) -> str",
+
+    # tools_config.py — cua-driver refresh
+    "hermes_cli.tools_config:install_cua_driver": "(upgrade: bool = False) -> bool",
+
+    # gateway.status — survivor sweep
+    "gateway.status:terminate_pid": "(pid: int, *, force: bool = False) -> None",
 }
 
 # ─── Frozen CLI surfaces ──────────────────────────────────────────────
