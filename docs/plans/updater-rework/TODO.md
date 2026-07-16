@@ -52,11 +52,11 @@ This is an implementation checklist, not a record that the phases are complete. 
   - Tests: `update_marker_rejects_concurrent_acquisition` + `update_marker_reclaims_stale_pid`.
   - Spec: `02-phase1-updater.md:171-175`; `docs/updater-world.md:524-528`.
 
-- [ ] Wire `min_updater_version` and the bootstrap hop into production apply.
-  - `selfupdate::needs_hop()` and `hop()` are dead code.
-  - Apply never reads `manifest.min_updater_version`: `apps/hermes-launcher/src/apply.rs:38-53`.
-  - Hop must happen after signature/hash verification and before unfamiliar mutation, with the one-hop guard preserved.
-  - Add an E2E using an updater below the bundle minimum.
+- [x] Wire `min_updater_version` and the bootstrap hop into production apply.
+  - `apply_release()` now reads `manifest.min_updater_version` after signature verification and before preflight/stage; calls `selfupdate::hop()` if `needs_hop(env!("CARGO_PKG_VERSION"), min_updater_version)` is true.
+  - One-shot `--hopped` guard preserved — hopped binary doesn't re-hop.
+  - `ApplyRequest` gained `argv: Option<&[String]>` for the re-exec; all three callers (apply, install, adopt) updated.
+  - Also fixed install path which had marker-after-apply bug (same as apply path).
   - Spec: `02-phase1-updater.md:204-233`; `docs/updater-world.md:450-502`.
 
 - [ ] Never delete or replace an active/previous immutable slot in place.
