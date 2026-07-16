@@ -38,9 +38,9 @@ This is an implementation checklist, not a record that the phases are complete. 
   - `write_manifest()` now auto-detects `desktop/` directory presence when `desktop=None` (the default), so CI that builds desktop via `build-bundle.sh` produces correct manifests without needing `--desktop`.
   - Tests: `test_desktop_auto_detected_when_dir_present` + `test_desktop_auto_detected_when_dir_absent`.
 
-- [ ] Make Node acquisition reproducible and integrity-checked.
-  - `build-bundle.sh` scrapes `latest-v22.x` without verifying the Node archive checksum or recording the resolved full version in the bundle manifest.
-  - Two builds of one commit can therefore contain different Node runtimes.
+- [x] Make Node acquisition reproducible and integrity-checked.
+  - `build-bundle.sh` now downloads `SHASUMS256.txt` from the Node.js release directory and verifies the tarball's sha256 before unpacking. Fails closed on checksum mismatch or missing SHASUMS file.
+  - Resolved full Node version (e.g. `v22.12.1`) recorded in `runtime/node/.node-version` for reproducibility auditing.
   - Spec: `01-phase0-bundles.md:227-234`.
 
 ### Updater atomicity and lifecycle
