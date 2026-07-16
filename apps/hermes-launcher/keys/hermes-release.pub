@@ -1,0 +1,12 @@
+# Hermes Release Public Key (Ed25519)
+#
+# This is the trust root for bundle manifest signatures. The Rust updater
+# embeds this key at compile time via include_str! and uses it to verify
+# every release manifest's Ed25519 signature.
+#
+# Format: base64-encoded 32-byte Ed25519 public key on a single line.
+#
+# In CI builds, this file is populated by the release workflow from the
+# HERMES_RELEASE_PUBLIC_KEY environment variable. For local development
+# and testing, the build falls back to HERMES_RELEASE_PUBLIC_KEY if this
+# file is empty or missing.

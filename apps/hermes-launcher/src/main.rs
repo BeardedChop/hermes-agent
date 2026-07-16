@@ -108,13 +108,39 @@ fn launch(args: Vec<String>) -> anyhow::Result<()> {
     launch::launch(args)
 }
 
+/// The trusted Ed25519 public key for release manifest signatures.
+///
+/// Trust root: the key embedded in-repo at `keys/hermes-release.pub`
+/// (via `include_str!`). This makes the trust root auditable — it's in
+/// the git history, not a build-time env var.
+///
+/// For CI and testing, `HERMES_RELEASE_PUBLIC_KEY` overrides the embedded
+/// key. This lets release CI sign with its own keypair and test fixtures
+/// use throwaway keys without modifying the repo file.
 fn trusted_release_pubkey() -> anyhow::Result<&'static str> {
-    option_env!("HERMES_RELEASE_PUBLIC_KEY")
-        .filter(|key| !key.trim().is_empty())
-        .map(str::trim)
-        .ok_or_else(|| {
-            anyhow::anyhow!("this updater was built without the Hermes release public key")
-        })
+    // Env var override (CI/testing).
+    if let Some(key) = option_env!("HERMES_RELEASE_PUBLIC_KEY") {
+        let key = key.trim();
+        if !key.is_empty() {
+            return Ok(key);
+        }
+    }
+
+    // Fall back to the in-repo embedded key (via include_str!).
+    // The file may contain comment lines starting with '#'; the key is the
+    // first non-comment, non-empty line.
+    const EMBEDDED_KEY: &str = include_str!("../keys/hermes-release.pub");
+    for line in EMBEDDED_KEY.lines() {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            return Ok(trimmed);
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "no trusted release public key: neither HERMES_RELEASE_PUBLIC_KEY \
+         nor keys/hermes-release.pub provides a key"
+    ))
 }
 
 fn release_source(source: Option<String>) -> anyhow::Result<release::ReleaseSource> {

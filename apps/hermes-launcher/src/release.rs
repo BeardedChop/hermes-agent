@@ -93,10 +93,16 @@ impl ReleaseSource {
             Ok(ReleaseSource::File {
                 base_path: PathBuf::from(path),
             })
-        } else if url.starts_with("https://") || url.starts_with("http://") {
+        } else if url.starts_with("https://") {
             Ok(ReleaseSource::Https {
                 base_url: url.to_string(),
             })
+        } else if url.starts_with("http://") {
+            bail!(
+                "insecure release source rejected: {} — use https:// or file:// \
+                 (release artifacts must be fetched over a tamper-resistant transport)",
+                url
+            )
         } else {
             bail!(
                 "unsupported source URL scheme: {} (use https:// or file://)",
@@ -622,6 +628,14 @@ mod tests {
     #[test]
     fn test_parse_invalid_source() {
         assert!(ReleaseSource::parse("ftp://example.com").is_err());
+    }
+
+    #[test]
+    fn test_parse_rejects_insecure_http() {
+        let result = ReleaseSource::parse("http://example.com/releases");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("insecure"));
     }
 
     #[test]
