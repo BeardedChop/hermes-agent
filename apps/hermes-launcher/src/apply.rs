@@ -9,6 +9,53 @@ use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Validate that a verified manifest matches the expected identity before
+/// any mutation happens. Checks platform, channel, version path safety, and
+/// archive name consistency.
+fn validate_manifest_identity(
+    manifest: &Manifest,
+    expected_platform: &str,
+    expected_channel: &str,
+    expected_version: &str,
+) -> Result<()> {
+    if manifest.platform != expected_platform {
+        bail!(
+            "manifest platform mismatch: expected {}, manifest says {}",
+            expected_platform,
+            manifest.platform
+        );
+    }
+    if manifest.channel != expected_channel {
+        bail!(
+            "manifest channel mismatch: expected {}, manifest says {}",
+            expected_channel,
+            manifest.channel
+        );
+    }
+    // Version must be a safe single path component — no separators, no ..
+    if manifest.version.is_empty()
+        || manifest.version.contains('/')
+        || manifest.version.contains('\\')
+        || manifest.version.contains('\0')
+        || manifest.version == "."
+        || manifest.version == ".."
+        || manifest.version.contains("..")
+    {
+        bail!(
+            "manifest version is not a valid path component: {:?}",
+            manifest.version
+        );
+    }
+    if manifest.version != expected_version {
+        bail!(
+            "release version mismatch: requested {}, manifest says {}",
+            expected_version,
+            manifest.version
+        );
+    }
+    Ok(())
+}
+
 pub struct ApplyRequest<'a> {
     pub hermes_home: &'a Path,
     pub source: &'a ReleaseSource,
@@ -40,13 +87,7 @@ pub fn apply_release(request: ApplyRequest<'_>) -> Result<Manifest> {
         unpack_archive(&archive, &staging, &platform)?;
         normalize_archive_root(&staging)?;
         let manifest = crate::release::verify_bundle(&staging, Some(request.trusted_pubkey))?;
-        if manifest.version != version {
-            bail!(
-                "release version mismatch: requested {}, manifest says {}",
-                version,
-                manifest.version
-            );
-        }
+        validate_manifest_identity(&manifest, &platform, request.channel, &version)?;
         run_preflight(&staging)?;
         slots::commit_staging(request.hermes_home, &version)?;
         slots::flip(request.hermes_home, &version)?;
@@ -422,5 +463,61 @@ mod tests {
             fs::read_to_string(destination.join("bundle/manifest.json")).unwrap(),
             "{}\n"
         );
+    }
+
+    fn make_manifest(version: &str, platform: &str, channel: &str) -> Manifest {
+        Manifest {
+            schema: 1,
+            version: version.to_owned(),
+            channel: channel.to_owned(),
+            git_sha: "a".repeat(40),
+            platform: platform.to_owned(),
+            min_updater_version: "0.1.0".to_owned(),
+            desktop: false,
+            files: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn validate_identity_accepts_matching_manifest() {
+        let manifest = make_manifest("1.0.0", "linux-x64", "stable");
+        validate_manifest_identity(&manifest, "linux-x64", "stable", "1.0.0").unwrap();
+    }
+
+    #[test]
+    fn validate_identity_rejects_platform_mismatch() {
+        let manifest = make_manifest("1.0.0", "win-x64", "stable");
+        let result = validate_manifest_identity(&manifest, "linux-x64", "stable", "1.0.0");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("platform"));
+    }
+
+    #[test]
+    fn validate_identity_rejects_channel_mismatch() {
+        let manifest = make_manifest("1.0.0", "linux-x64", "nightly");
+        let result = validate_manifest_identity(&manifest, "linux-x64", "stable", "1.0.0");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("channel"));
+    }
+
+    #[test]
+    fn validate_identity_rejects_version_mismatch() {
+        let manifest = make_manifest("2.0.0", "linux-x64", "stable");
+        let result = validate_manifest_identity(&manifest, "linux-x64", "stable", "1.0.0");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("version"));
+    }
+
+    #[test]
+    fn validate_identity_rejects_path_traversal_version() {
+        for bad in &["../etc", "..", "a/b", "a\\b", "", "."] {
+            let manifest = make_manifest(bad, "linux-x64", "stable");
+            let result = validate_manifest_identity(&manifest, "linux-x64", "stable", bad);
+            assert!(
+                result.is_err(),
+                "version {:?} should be rejected as invalid path component",
+                bad
+            );
+        }
     }
 }
