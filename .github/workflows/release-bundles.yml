@@ -159,10 +159,10 @@ jobs:
         run: |
           set -e
           if [[ "${{ matrix.os }}" == "win" ]]; then
-            dist/bundle/bin/hermes.exe --version
+            dist/bundle/bin/hermes.exe --global --version
             dist/bundle/runtime/venv/Scripts/python.exe -c "import hermes_cli, run_agent, model_tools; print('SMOKE_TEST_OK')"
           else
-            dist/bundle/bin/hermes --version
+            dist/bundle/bin/hermes --global --version
             dist/bundle/runtime/venv/bin/python -c "import hermes_cli, run_agent, model_tools; print('SMOKE_TEST_OK')"
           fi
 

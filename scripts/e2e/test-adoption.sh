@@ -31,7 +31,10 @@ if [ -z "${HERMES_ADOPTION_E2E_CONTAINER:-}" ] && grep -qi '^ID=nixos' /etc/os-r
 fi
 
 WORK=$(mktemp -d)
-export HOME="$WORK/user-home"
+ORIGINAL_HOME="$HOME"
+export CARGO_HOME="${CARGO_HOME:-$ORIGINAL_HOME/.cargo}"
+export RUSTUP_HOME="${RUSTUP_HOME:-$ORIGINAL_HOME/.rustup}"
+export HOME="$WORK/user"
 export HERMES_HOME="$WORK/hermes-home"
 LEGACY_SOURCE="$WORK/legacy-source"
 LEGACY_CHECKOUT="$HERMES_HOME/hermes-agent"
