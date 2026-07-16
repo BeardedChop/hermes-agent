@@ -57,7 +57,19 @@ class TestCollectFileHashes:
     def test_skips_manifest_files(self, bundle_fixture):
         hashes = collect_file_hashes(bundle_fixture)
         assert "manifest.json" not in hashes
+        assert "manifest.json.sig" not in hashes
         assert "manifest.json.minisig" not in hashes
+
+    def test_skips_symlinks(self, bundle_fixture):
+        target = bundle_fixture / "runtime" / "python-target"
+        target.mkdir()
+        (target / "python").write_text("runtime")
+        link = bundle_fixture / "runtime" / "python-link"
+        link.symlink_to(target, target_is_directory=True)
+
+        hashes = collect_file_hashes(bundle_fixture)
+
+        assert not any(path.startswith("runtime/python-link") for path in hashes)
 
     def test_hashes_are_sha256_format(self, bundle_fixture):
         hashes = collect_file_hashes(bundle_fixture)

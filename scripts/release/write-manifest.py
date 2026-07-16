@@ -65,12 +65,12 @@ def collect_file_hashes(bundle_dir: Path) -> dict[str, str]:
         dirs[:] = [d for d in dirs if d != ".staging"]
         for filename in filenames:
             filepath = Path(root) / filename
-            if not filepath.is_file():
+            if filepath.is_symlink() or not filepath.is_file():
                 continue
             rel = filepath.relative_to(bundle_dir)
             rel_str = str(rel)
             # Skip manifest files — they're written after hashing
-            if rel_str in ("manifest.json", "manifest.json.minisig"):
+            if rel_str in ("manifest.json", "manifest.json.sig", "manifest.json.minisig"):
                 continue
             files[rel_str] = compute_file_hash(filepath)
     return files
@@ -133,8 +133,10 @@ def verify_file_hashes(bundle_dir: Path, manifest: dict) -> tuple[bool, list[str
         dirs[:] = [d for d in dirs if d != ".staging"]
         for filename in filenames:
             filepath = Path(root) / filename
+            if filepath.is_symlink() or not filepath.is_file():
+                continue
             rel = str(filepath.relative_to(bundle_dir))
-            if rel in ("manifest.json", "manifest.json.minisig"):
+            if rel in ("manifest.json", "manifest.json.sig", "manifest.json.minisig"):
                 continue
             actual_files.add(rel)
 

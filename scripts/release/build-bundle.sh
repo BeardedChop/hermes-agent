@@ -100,9 +100,9 @@ mkdir -p "$PYTHON_INSTALL_DIR"
 #   <install-dir>/cpython-3.11.15-linux-x86_64-gnu/bin/python
 "$UV" python install "$PYTHON_VERSION" --install-dir "$PYTHON_INSTALL_DIR"
 # Find the python binary in the nested structure
-BUNDLE_PYTHON=$(find "$PYTHON_INSTALL_DIR" -name "python3.11" -type f 2>/dev/null | head -1)
+BUNDLE_PYTHON=$(find "$PYTHON_INSTALL_DIR" \( -name "python3.11" -o -name "python3.11.exe" \) -type f 2>/dev/null | head -1)
 if [ -z "$BUNDLE_PYTHON" ]; then
-    BUNDLE_PYTHON=$(find "$PYTHON_INSTALL_DIR" -name "python" -type f 2>/dev/null | head -1)
+    BUNDLE_PYTHON=$(find "$PYTHON_INSTALL_DIR" \( -name "python" -o -name "python.exe" \) -type f 2>/dev/null | head -1)
 fi
 if [ -z "$BUNDLE_PYTHON" ] || [ ! -x "$BUNDLE_PYTHON" ]; then
     echo "ERROR: bundle python not found in $PYTHON_INSTALL_DIR" >&2
@@ -115,6 +115,11 @@ echo "    Python at: $BUNDLE_PYTHON"
 echo "==> [4/7] Creating non-editable venv from uv.lock..."
 VENV_DIR="$OUT_DIR/runtime/venv"
 "$UV" venv --python "$BUNDLE_PYTHON" --relocatable "$VENV_DIR"
+if [ -x "$VENV_DIR/Scripts/python.exe" ]; then
+    VENV_PYTHON="$VENV_DIR/Scripts/python.exe"
+else
+    VENV_PYTHON="$VENV_DIR/bin/python"
+fi
 
 # Build from a throwaway copy (like check-relocatable.sh) so the source
 # tree is unreachable after the build — proves the venv carries everything.
@@ -124,14 +129,14 @@ git -C "$REPO_ROOT" archive HEAD | tar -x -C "$WORK"
 cp "$REPO_ROOT/uv.lock" "$WORK/uv.lock" 2>/dev/null || true
 
 VIRTUAL_ENV="$VENV_DIR" "$UV" sync --extra all --locked --no-editable --active \
-    --project "$WORK" --python "$VENV_DIR/bin/python"
+    --project "$WORK" --python "$VENV_PYTHON"
 
 # Fix: uv --relocatable makes entry-point scripts relative but leaves the
 # python symlink absolute. In a bundle mounted at a different path (e.g.
 # docker /b instead of /tmp/e2e-bundle), the absolute symlink breaks.
 # Replace it with a relative symlink to the runtime python.
 echo "    Fixing venv python symlink to be relative..."
-PYTHON_SYMLINK="$VENV_DIR/bin/python"
+PYTHON_SYMLINK="$VENV_PYTHON"
 if [ -L "$PYTHON_SYMLINK" ]; then
     TARGET=$(readlink "$PYTHON_SYMLINK")
     if [[ "$TARGET" == /* ]]; then
@@ -281,7 +286,7 @@ echo "==> Verifying bundle..."
 "$OUT_DIR/bin/hermes" --version 2>/dev/null && echo "    PASS: bin/hermes --version" || \
     echo "    WARN: bin/hermes --version failed (may need manifest.json from task 0.4)"
 
-"$OUT_DIR/runtime/venv/bin/python" -c "import hermes_cli, run_agent, model_tools; print('    PASS: core imports')" 2>/dev/null || \
+"$VENV_PYTHON" -c "import hermes_cli, run_agent, model_tools; print('    PASS: core imports')" 2>/dev/null || \
     echo "    WARN: core import check failed"
 
 echo ""
