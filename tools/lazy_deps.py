@@ -832,6 +832,31 @@ def ensure(feature: str, *, prompt: bool = True) -> None:
 
     still_missing = feature_missing(feature)
     if still_missing:
+        # ``importlib.metadata`` caches distributions in some Python releases.
+        # Verify once in a fresh interpreter before reporting a successful
+        # install as missing; the next Hermes process is the runtime that will
+        # actually consume the newly installed package.
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import json,sys; from tools.lazy_deps import feature_missing; "
+                    "sys.stdout.write(json.dumps(feature_missing(sys.argv[1])))"
+                ),
+                feature,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=os.environ.copy(),
+        )
+        if probe.returncode == 0:
+            try:
+                still_missing = tuple(json.loads(probe.stdout))
+            except (json.JSONDecodeError, TypeError):
+                pass
+    if still_missing:
         raise FeatureUnavailable(
             feature, still_missing,
             "install reported success but packages still not importable "
