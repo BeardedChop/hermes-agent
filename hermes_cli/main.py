@@ -316,6 +316,7 @@ from hermes_cli.subcommands.prompt_size import build_prompt_size_parser
 from hermes_cli.subcommands.memory import build_memory_parser
 from hermes_cli.subcommands.acp import build_acp_parser
 from hermes_cli.subcommands.tools import build_tools_parser
+from hermes_cli.subcommands.features import build_features_parser
 from hermes_cli.subcommands.insights import build_insights_parser
 from hermes_cli.subcommands.skills import build_skills_parser
 from hermes_cli.subcommands.pairing import build_pairing_parser
@@ -13059,6 +13060,51 @@ def cmd_tools(args):
         tools_command(args)
 
 
+def cmd_features(args):
+    """Handle ``hermes features`` subcommands."""
+    from tools.lazy_deps import (
+        LAZY_DEPS,
+        apply_ledger,
+        ledger_features,
+        remove_feature,
+    )
+
+    action = getattr(args, "features_action", None)
+
+    if action == "disable":
+        remove_feature(args.name)
+        print(f"Removed {args.name!r} from the activation ledger.")
+        return
+
+    if action == "apply-ledger":
+        results = apply_ledger(getattr(args, "venv_python", None))
+        if getattr(args, "as_json", False):
+            import json
+            print(json.dumps(results, indent=2, sort_keys=True))
+        else:
+            if not results:
+                print("No features in the activation ledger.")
+                return
+            print(f"{'Feature':<35} {'Result'}")
+            print("-" * 60)
+            for feat, status in sorted(results.items()):
+                print(f"{feat:<35} {status}")
+        return
+
+    # Default: list (also for explicit "list" action)
+    features = ledger_features()
+    if not features:
+        print("No features in the activation ledger.")
+        return
+    print(f"{'Feature':<35} {'Status'}")
+    print("-" * 50)
+    for feat in sorted(features):
+        from tools.lazy_deps import feature_missing
+        installed = feat in LAZY_DEPS and not feature_missing(feat)
+        status = "installed" if installed else "missing"
+        print(f"{feat:<35} {status}")
+
+
 def cmd_insights(args):
     try:
         from hermes_state import SessionDB
@@ -13631,6 +13677,11 @@ def main():
     # tools command  (parser built in hermes_cli/subcommands/tools.py)
     # =========================================================================
     build_tools_parser(subparsers, cmd_tools=cmd_tools)
+
+    # =========================================================================
+    # features command  (parser built in hermes_cli/subcommands/features.py)
+    # =========================================================================
+    build_features_parser(subparsers, cmd_features=cmd_features)
 
     # =========================================================================
     # computer-use command — manage Computer Use (cua-driver) on macOS
