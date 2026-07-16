@@ -116,8 +116,8 @@ pub fn invoked_as_updater() -> bool {
 /// Parse CLI args. When invoked as `hermes-updater` with no subcommand,
 /// default to `status` (the most common updater query). When invoked as
 /// `hermes` with no subcommand, default to `launch`.
-pub fn parse() -> Cli {
-    let mut cli = Cli::parse();
+pub fn parse_from(args: impl IntoIterator<Item = String>) -> Cli {
+    let mut cli = Cli::parse_from(args);
 
     // If no subcommand was given, pick a default based on argv[0].
     if cli.command.is_none() {

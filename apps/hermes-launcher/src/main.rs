@@ -23,7 +23,8 @@ fn hermes_home() -> anyhow::Result<PathBuf> {
 }
 
 fn main() -> anyhow::Result<()> {
-    let cli = cli::parse();
+    let args = apply_cwd_guard()?;
+    let cli = cli::parse_from(args);
 
     match cli.command {
         Some(Command::Launch { args }) => launch(args),
@@ -47,6 +48,44 @@ fn main() -> anyhow::Result<()> {
             // Should not happen — parse() fills in a default.
             unreachable!("cli::parse() should always set a command")
         }
+    }
+}
+
+fn apply_cwd_guard() -> anyhow::Result<Vec<String>> {
+    let mut argv: Vec<String> = std::env::args().collect();
+    if cli::invoked_as_updater() {
+        return Ok(argv);
+    }
+    let cwd = std::env::current_dir().context("cannot resolve current directory")?;
+    let executable = std::env::current_exe().context("cannot resolve launcher executable")?;
+    let launcher_tree = tree::resolve_tree_root(&executable)?;
+    match cwd_guard::cwd_guard(&launcher_tree.root, &cwd, &argv) {
+        cwd_guard::GuardDecision::Refuse(message) => {
+            eprintln!("{message}");
+            std::process::exit(2);
+        }
+        cwd_guard::GuardDecision::Run => {
+            argv.retain(|arg| arg != "--dev" && arg != "--global");
+            Ok(argv)
+        }
+        cwd_guard::GuardDecision::ReExec(path) => reexec_checkout(path, &argv[1..]),
+    }
+}
+
+fn reexec_checkout(path: PathBuf, args: &[String]) -> anyhow::Result<Vec<String>> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let error = std::process::Command::new(&path).args(args).exec();
+        Err(error).with_context(|| format!("cannot exec {}", path.display()))
+    }
+    #[cfg(not(unix))]
+    {
+        let status = std::process::Command::new(&path)
+            .args(args)
+            .status()
+            .with_context(|| format!("cannot launch {}", path.display()))?;
+        std::process::exit(status.code().unwrap_or(1));
     }
 }
 
