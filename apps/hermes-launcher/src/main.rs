@@ -189,14 +189,16 @@ fn install(
     }
 
     let source = release_source(source)?;
+    let argv: Vec<String> = std::env::args().collect();
+    let _marker = apply::UpdateMarker::acquire(&home)?;
     let manifest = apply::apply_release(apply::ApplyRequest {
         hermes_home: &home,
         source: &source,
         version: None,
         channel: &channel,
         trusted_pubkey: trusted_release_pubkey()?,
+        argv: Some(&argv),
     })?;
-    let _marker = apply::UpdateMarker::acquire(&home)?;
     apply::activate_stable_launchers(&home, &manifest.version)?;
     println!("Installed Hermes {}", manifest.version);
     Ok(())
@@ -327,12 +329,14 @@ fn apply(
     // download→verify→stage→preflight→commit→flip→restart→notify
     // critical section is mutually exclusive.
     let _marker = apply::UpdateMarker::acquire(&home)?;
+    let argv: Vec<String> = std::env::args().collect();
     let manifest = apply::apply_release(apply::ApplyRequest {
         hermes_home: &home,
         source: &source,
         version: version.as_deref(),
         channel: "stable",
         trusted_pubkey: trusted_release_pubkey()?,
+        argv: Some(&argv),
     })?;
     apply::activate_stable_launchers(&home, &manifest.version)?;
     if let Err(error) = apply::apply_feature_ledger(&home, &manifest.version) {

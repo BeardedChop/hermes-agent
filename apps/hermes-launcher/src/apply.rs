@@ -62,6 +62,9 @@ pub struct ApplyRequest<'a> {
     pub version: Option<&'a str>,
     pub channel: &'a str,
     pub trusted_pubkey: &'a str,
+    /// Original process argv, used for the bootstrap hop re-exec.
+    /// When None, the hop is skipped (e.g. in tests).
+    pub argv: Option<&'a [String]>,
 }
 
 pub fn apply_release(request: ApplyRequest<'_>) -> Result<Manifest> {
@@ -88,6 +91,32 @@ pub fn apply_release(request: ApplyRequest<'_>) -> Result<Manifest> {
         normalize_archive_root(&staging)?;
         let manifest = crate::release::verify_bundle(&staging, Some(request.trusted_pubkey))?;
         validate_manifest_identity(&manifest, &platform, request.channel, &version)?;
+
+        // Bootstrap hop: if the bundle requires a newer updater than us,
+        // extract the new updater binary from the verified bundle and
+        // re-exec into it. This happens AFTER signature/hash verification
+        // and BEFORE any mutation (preflight/commit/flip).
+        //
+        // The --hopped flag is the one-shot guard: if we're already the
+        // hopped binary, we don't hop again (the new version satisfies the
+        // requirement, or if it doesn't, needs_hop returns false because
+        // our version is now the new one).
+        let already_hopped = std::env::args().any(|a| a == "--hopped");
+        if !already_hopped {
+            if let Some(argv) = request.argv {
+                let my_version = env!("CARGO_PKG_VERSION");
+                if crate::selfupdate::needs_hop(my_version, &manifest.min_updater_version) {
+                    eprintln!(
+                        "Bootstrap hop required: bundle needs updater >= {}, this is {}",
+                        manifest.min_updater_version, my_version
+                    );
+                    crate::selfupdate::hop(&staging, argv)?;
+                    // hop() re-execs; if we reach here, the exec failed.
+                    bail!("bootstrap hop failed to re-exec");
+                }
+            }
+        }
+
         run_preflight(&staging)?;
         slots::commit_staging(request.hermes_home, &version)?;
         slots::flip(request.hermes_home, &version)?;
@@ -537,6 +566,7 @@ mod tests {
             version: None,
             channel: "stable",
             trusted_pubkey: &pubkey,
+            argv: None,
         })
         .unwrap();
 

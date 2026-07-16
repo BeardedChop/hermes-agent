@@ -33,12 +33,14 @@ pub fn adopt(
     let source_url =
         source.unwrap_or("https://github.com/NousResearch/hermes-agent/releases/download");
     let release_source = ReleaseSource::parse(source_url)?;
+    let argv: Vec<String> = std::env::args().collect();
     let manifest = apply::apply_release(ApplyRequest {
         hermes_home,
         source: &release_source,
         version: None,
         channel: "stable",
         trusted_pubkey,
+        argv: Some(&argv),
     })?;
     let version = manifest.version;
     let slot = hermes_home.join("versions").join(&version);
