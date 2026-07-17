@@ -92,12 +92,12 @@ class EvidenceStore:
         source: str,
         content: str,
         evidence_type: str,
-        actor: str = None,
-        url: str = None,
-        timestamp: str = None,
-        ioc_type: str = None,
+        actor: str | None = None,
+        url: str | None = None,
+        timestamp: str | None = None,
+        ioc_type: str | None = None,
         verification: str = "unverified",
-        notes: str = None,
+        notes: str | None = None,
     ) -> str:
         evidence_id = self._next_id()
         entry = {

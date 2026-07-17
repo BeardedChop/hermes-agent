@@ -305,7 +305,7 @@ def _scroll(
     session_id: str,
     around_message_id: int,
     window: int = 5,
-    current_session_id: str = None,
+    current_session_id: str | None = None,
 ) -> str:
     """Scroll shape: return a window of messages centered on an anchor.
 
@@ -502,7 +502,7 @@ def _discover(
     role_filter: Optional[List[str]],
     limit: int,
     sort: Optional[str],
-    current_session_id: str = None,
+    current_session_id: str | None = None,
 ) -> str:
     """Discovery shape: FTS5 + anchored window + bookends per hit. Single call."""
     role_list = role_filter if role_filter else ["user", "assistant"]
@@ -618,18 +618,18 @@ def _discover(
 
 def session_search(
     query: str = "",
-    role_filter: str = None,
+    role_filter: str | None = None,
     limit: int = 3,
     db=None,
-    current_session_id: str = None,
+    current_session_id: str | None = None,
     # Scroll shape
-    session_id: str = None,
-    around_message_id: int = None,
+    session_id: str | None = None,
+    around_message_id: int | None = None,
     window: int = 5,
     # Discovery shape
-    sort: str = None,
+    sort: str | None = None,
     # Cross-profile (any shape)
-    profile: str = None,
+    profile: str | None = None,
 ) -> str:
     """Single-shape tool. Mode inferred from which args are set.
 

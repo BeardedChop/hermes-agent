@@ -689,10 +689,10 @@ class ProcessRegistry:
     def spawn_local(
         self,
         command: str,
-        cwd: str = None,
+        cwd: str | None = None,
         task_id: str = "",
         session_key: str = "",
-        env_vars: dict = None,
+        env_vars: dict | None = None,
         use_pty: bool = False,
     ) -> ProcessSession:
         """
@@ -829,7 +829,7 @@ class ProcessRegistry:
         self,
         env: Any,
         command: str,
-        cwd: str = None,
+        cwd: str | None = None,
         task_id: str = "",
         session_key: str = "",
         timeout: int = 10,

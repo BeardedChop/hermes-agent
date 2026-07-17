@@ -4042,9 +4042,9 @@ def get_sessions(
     min_messages: int = 0,
     archived: str = "exclude",
     order: str = "created",
-    source: str = None,
-    exclude_sources: str = None,
-    cwd_prefix: str = None,
+    source: str | None = None,
+    exclude_sources: str | None = None,
+    cwd_prefix: str | None = None,
     full: bool = False,
     profile: Optional[str] = None,
 ):
@@ -4142,8 +4142,8 @@ def get_profiles_sessions(
     archived: str = "exclude",
     order: str = "recent",
     profile: str = "all",
-    source: str = None,
-    exclude_sources: str = None,
+    source: str | None = None,
+    exclude_sources: str | None = None,
     full: bool = False,
 ):
     """Unified, read-only session list aggregated across ALL profiles.

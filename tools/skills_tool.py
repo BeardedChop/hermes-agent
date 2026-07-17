@@ -960,8 +960,8 @@ def _serve_plugin_skill(
 
 def skill_view(
     name: str,
-    file_path: str = None,
-    task_id: str = None,
+    file_path: str | None = None,
+    task_id: str | None = None,
     preprocess: bool = True,
 ) -> str:
     """

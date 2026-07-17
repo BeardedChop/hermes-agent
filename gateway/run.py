@@ -219,7 +219,7 @@ def _gateway_platform_value(platform: Any) -> str:
 def _non_conversational_metadata(
     metadata: Optional[Dict[str, Any]] = None,
     *,
-    platform: Any = None,
+    platform: Any | None = None,
 ) -> Optional[Dict[str, Any]]:
     """Mark Discord lifecycle/status sends without changing other platforms."""
     if _gateway_platform_value(platform) != "discord":
@@ -542,7 +542,7 @@ def _resolve_gateway_display_bool(
     setting: str,
     *,
     default: bool = False,
-    platform: Any = None,
+    platform: Any | None = None,
     require_platform_override_for: set[Any] | None = None,
 ) -> bool:
     """Resolve a boolean display setting with optional platform-only opt-in.
@@ -17311,7 +17311,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         history: List[Dict[str, Any]],
         source: "SessionSource",
         session_id: str,
-        session_key: str = None,
+        session_key: str | None = None,
         run_generation: Optional[int] = None,
         event_message_id: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -17610,7 +17610,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         history: List[Dict[str, Any]],
         source: SessionSource,
         session_id: str,
-        session_key: str = None,
+        session_key: str | None = None,
         run_generation: Optional[int] = None,
         _interrupt_depth: int = 0,
         event_message_id: Optional[str] = None,
@@ -17760,7 +17760,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         history: List[Dict[str, Any]],
         source: SessionSource,
         session_id: str,
-        session_key: str = None,
+        session_key: str | None = None,
         run_generation: Optional[int] = None,
         _interrupt_depth: int = 0,
         event_message_id: Optional[str] = None,

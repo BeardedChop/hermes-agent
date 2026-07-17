@@ -163,8 +163,8 @@ class MiniSWERunner:
     def __init__(
         self,
         model: str = "anthropic/claude-sonnet-4.6",
-        base_url: str = None,
-        api_key: str = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
         env_type: str = "local",
         image: str = "python:3.11-slim",
         cwd: str = "/tmp",
@@ -628,12 +628,12 @@ Complete the user's task step by step."""
 # ============================================================================
 
 def main(
-    task: str = None,
-    prompts_file: str = None,
+    task: str | None = None,
+    prompts_file: str | None = None,
     output_file: str = "swe-runner-test1.jsonl",
     model: str = "claude-sonnet-4-20250514",
-    base_url: str = None,
-    api_key: str = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
     env: str = "local",
     image: str = "python:3.11-slim",
     cwd: str = "/tmp",

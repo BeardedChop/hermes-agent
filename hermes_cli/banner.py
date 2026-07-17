@@ -578,12 +578,12 @@ def _display_toolset_name(toolset_name: str) -> str:
 
 
 def build_welcome_banner(console: "Console", model: str, cwd: str,
-                         tools: List[dict] = None,
-                         enabled_toolsets: List[str] = None,
-                         session_id: str = None,
+                         tools: List[dict] | None = None,
+                         enabled_toolsets: List[str] | None = None,
+                         session_id: str | None = None,
                          get_toolset_for_tool=None,
-                         context_length: int = None,
-                         provider: str = None):
+                         context_length: int | None = None,
+                         provider: str | None = None):
     """Build and print a welcome banner with caduceus on left and info on right.
 
     Args:

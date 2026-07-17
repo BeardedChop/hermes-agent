@@ -2266,7 +2266,7 @@ def _extract_screenshot_path_from_text(text: str) -> Optional[str]:
 def _run_browser_command(
     task_id: str,
     command: str,
-    args: List[str] = None,
+    args: List[str] | None = None,
     timeout: Optional[int] = None,
     _engine_override: Optional[str] = None,
 ) -> Dict[str, Any]:

@@ -368,13 +368,13 @@ class ToolRegistry:
         toolset: str,
         schema: dict,
         handler: Callable,
-        check_fn: Callable = None,
-        requires_env: list = None,
+        check_fn: Callable | None = None,
+        requires_env: list | None = None,
         is_async: bool = False,
         description: str = "",
         emoji: str = "",
         max_result_size_chars: int | float | None = None,
-        dynamic_schema_overrides: Callable = None,
+        dynamic_schema_overrides: Callable | None = None,
         override: bool = False,
     ):
         """Register a tool.  Called at module-import time by each tool file.

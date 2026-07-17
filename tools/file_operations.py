@@ -834,7 +834,7 @@ class ShellFileOperations(FileOperations):
         self._command_cache: Dict[str, bool] = {}
     
     def _exec(self, command: str, cwd: str = None, timeout: int = None,
-              stdin_data: str = None) -> ExecuteResult:
+              stdin_data: str | None = None) -> ExecuteResult:
         """Execute command via terminal backend.
 
         Args:

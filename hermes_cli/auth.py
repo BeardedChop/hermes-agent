@@ -2132,8 +2132,8 @@ def _scope_values(raw_scope: Any) -> set[str]:
 def _nous_invoke_jwt_status(
     token: Any,
     *,
-    scope: Any = None,
-    expires_at: Any = None,
+    scope: Any | None = None,
+    expires_at: Any | None = None,
     min_ttl_seconds: int = NOUS_INVOKE_JWT_MIN_TTL_SECONDS,
 ) -> Optional[str]:
     """Return None when the token can be used for inference, else a reason."""
@@ -2161,8 +2161,8 @@ def _nous_invoke_jwt_status(
 def _nous_invoke_jwt_is_usable(
     token: Any,
     *,
-    scope: Any = None,
-    expires_at: Any = None,
+    scope: Any | None = None,
+    expires_at: Any | None = None,
     min_ttl_seconds: int = NOUS_INVOKE_JWT_MIN_TTL_SECONDS,
 ) -> bool:
     return (
@@ -2179,7 +2179,7 @@ def _nous_invoke_jwt_is_usable(
 def _assert_nous_inference_jwt_usable(
     state: Dict[str, Any],
     *,
-    access_token: Any = None,
+    access_token: Any | None = None,
 ) -> None:
     token = state.get("access_token") if access_token is None else access_token
     reason = _nous_invoke_jwt_status(
@@ -2263,7 +2263,7 @@ def _set_nous_agent_key_from_invoke_jwt(
 def _select_nous_invoke_jwt(
     state: Dict[str, Any],
     *,
-    access_token: Any = None,
+    access_token: Any | None = None,
     sequence_id: Optional[str] = None,
 ) -> None:
     if isinstance(access_token, str) and access_token.strip():

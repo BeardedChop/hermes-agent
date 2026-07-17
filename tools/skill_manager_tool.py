@@ -918,7 +918,7 @@ def _patch_skill(
     name: str,
     old_string: str,
     new_string: str,
-    file_path: str = None,
+    file_path: str | None = None,
     replace_all: bool = False,
 ) -> Dict[str, Any]:
     """Targeted find-and-replace within a skill file.
@@ -1323,14 +1323,14 @@ def apply_skill_pending(payload: Dict[str, Any]) -> str:
 def skill_manage(
     action: str,
     name: str,
-    content: str = None,
-    category: str = None,
-    file_path: str = None,
-    file_content: str = None,
-    old_string: str = None,
-    new_string: str = None,
+    content: str | None = None,
+    category: str | None = None,
+    file_path: str | None = None,
+    file_content: str | None = None,
+    old_string: str | None = None,
+    new_string: str | None = None,
     replace_all: bool = False,
-    absorbed_into: str = None,
+    absorbed_into: str | None = None,
 ) -> str:
     """
     Manage user-created skills. Dispatches to the appropriate action handler.

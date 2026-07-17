@@ -1355,11 +1355,11 @@ Write only the summary, starting with "[CONTEXT SUMMARY]:" prefix."""
 
 def main(
     input: str,
-    output: str = None,
+    output: str | None = None,
     config: str = "configs/trajectory_compression.yaml",
-    target_max_tokens: int = None,
-    tokenizer: str = None,
-    sample_percent: float = None,
+    target_max_tokens: int | None = None,
+    tokenizer: str | None = None,
+    sample_percent: float | None = None,
     seed: int = 42,
     dry_run: bool = False,
 ):

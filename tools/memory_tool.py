@@ -957,10 +957,10 @@ def _missing_old_text_error(store: "MemoryStore", target: str, action: str) -> s
 
 
 def memory_tool(
-    action: str = None,
+    action: str | None = None,
     target: str = "memory",
-    content: str = None,
-    old_text: str = None,
+    content: str | None = None,
+    old_text: str | None = None,
     operations: Optional[List[Dict[str, Any]]] = None,
     store: Optional[MemoryStore] = None,
 ) -> str:

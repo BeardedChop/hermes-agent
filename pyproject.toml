@@ -372,6 +372,11 @@ python-version = "3.13"
 unknown-argument = "warn"
 redundant-cast = "ignore"
 
+# Exclude tests from type-checking — they're the lowest-value typing target
+# (~57% of diagnostics) and we want to focus ty on the core codebase.
+[tool.ty.src]
+exclude = ["tests/"]
+
 [tool.ruff]
 preview = true  # required for PLW1514 (unspecified-encoding) — preview rule
 

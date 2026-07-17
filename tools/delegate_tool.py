@@ -869,7 +869,7 @@ def _build_child_progress_callback(
         return kw
 
     def _relay(
-        event_type: str, tool_name: str = None, preview: str = None, args=None, **kwargs
+        event_type: str, tool_name: str | None = None, preview: str = None, args=None, **kwargs
     ):
         if not parent_cb:
             return

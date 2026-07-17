@@ -1,0 +1,176 @@
+# ty type-checking notes — antipatterns & refactors spotted
+
+working through the codebase root-to-tip with astral.sh `ty`.
+logging antipatterns, clean refactors, and observations as we go.
+
+---
+
+## tools/registry.py (dependency root, 810 lines)
+
+### invalid-parameter-default (FIXED)
+three params in `ToolEntry.register()` were annotated as bare `Callable` / `list`
+but defaulted to `None`. this is the #1 pattern ty flags across the whole codebase
+(~423 occurrences). the fix is always the same: add `| None` to the annotation.
+
+```python
+# BEFORE
+check_fn: Callable = None,
+requires_env: list = None,
+dynamic_schema_overrides: Callable = None,
+
+# AFTER
+check_fn: Callable | None = None,
+requires_env: list | None = None,
+dynamic_schema_overrides: Callable | None = None,
+```
+
+this is the single highest-leverage fix across the codebase. each one of these
+cascades: when ty sees `None` as a possible value, every downstream `d["key"]`,
+`d.get(...)`, `d.pop()` on that variable becomes an `unresolved-attribute` or
+`not-subscriptable` or `invalid-argument-type` error. fixing the parameter
+default upstream makes all those downstream errors vanish.
+
+### antipattern: ToolEntry.__init__ has zero annotations
+
+```python
+def __init__(self, name, toolset, schema, handler, check_fn,
+             requires_env, is_async, description, emoji,
+             max_result_size_chars=None, dynamic_schema_overrides=None):
+```
+
+this is a core data class (every tool in the system passes through it) but has
+no type annotations on any parameter. `__slots__` is used so the shape is
+well-defined — adding annotations would be straightforward and high-value.
+ty can't infer much here because everything comes through as `Unknown`.
+
+not fixed yet — would benefit from a proper pass:
+```python
+def __init__(
+    self,
+    name: str,
+    toolset: str,
+    schema: dict,
+    handler: Callable,
+    check_fn: Callable | None,
+    requires_env: list[str],
+    is_async: bool,
+    description: str,
+    emoji: str,
+    max_result_size_chars: int | float | None = None,
+    dynamic_schema_overrides: Callable | None = None,
+):
+```
+
+### antipattern: tool_error / tool_result helpers lack annotations
+
+```python
+def tool_error(message, **extra) -> str:  # message: str, **extra: Any
+def tool_result(data=None, **kwargs) -> str:  # data: dict | None, **kwargs: Any
+```
+
+these are the canonical serialization helpers used by hundreds of tool handlers.
+low-effort to annotate, high-value since they're the return path for everything.
+
+### clean pattern: _check_fn_cached TTL + grace window
+
+this is well-done code. the TTL cache with transient-failure suppression is
+a correct implementation of a flaky-external-check absorption pattern. the
+docstrings explain WHY (issue #21658 / #5304 — flaky docker probes stripping
+tools mid-session). nothing to change here, just noting it as a positive
+example of defensive caching done right.
+
+### clean pattern: _snapshot_state() for thread safety
+
+using `_lock` + snapshot copies for reads is the right pattern for a registry
+that can be mutated by MCP dynamic refresh while other threads read. the
+generation counter for cache invalidation is also clean.
+
+### observation: `from typing import` vs PEP 604 `X | None`
+
+the file imports `Optional`, `Callable`, `Dict`, `List`, `Set` from `typing`
+but also uses `int | float | None` (PEP 604) in the same signatures. the
+codebase targets python >=3.11 so PEP 604 is always available. there's a
+mix of `Optional[X]` and `X | None` styles across files — not a bug, but
+worth standardizing on `X | None` (PEP 604) as we type-sweep since it's
+shorter and the modern idiom.
+
+---
+
+## agent/agent_init.py + run_agent.py (AIAgent constructor, 60+ params)
+
+### invalid-parameter-default (FIXED — 31 + 54 params)
+same pattern as registry.py but at massive scale. the AIAgent.__init__ in
+`agent_init.py` and the class `AIAgent.__init__` in `run_agent.py` each take
+~60 params, nearly all defaulting to None but annotated as bare `str`, `list`,
+`dict`, `int`, etc.
+
+### antipattern: lowercase `callable` used as a type annotation
+
+**this is a real runtime bug, not just a type error.** 14 callback params in
+both `agent_init.py` and `run_agent.py` were annotated as `callable` (the
+builtin *function*) instead of `Callable` (from `typing`).
+
+```python
+# BEFORE — runtime crash if you try `X | None`
+tool_progress_callback: callable = None,  # callable is the builtin function
+
+# AFTER
+tool_progress_callback: Callable | None = None,  # Callable is the type
+```
+
+when the automated sweep script added `| None` to these, it produced
+`callable | None` which crashes at *import time* with:
+```
+TypeError: unsupported operand type(s) for |: 'builtin_function_or_method' and 'NoneType'
+```
+
+this was lurking silently as long as nobody tried to make the annotation
+nullable — the `callable` builtin is truthy so `callable = None` didn't
+crash, it just stored a nonsensical annotation. the fix is `Callable` (capital C).
+
+also spotted in `agent/transports/chat_completions.py` in docstring-like
+comments (lines 290, 314-315) — not executable code but worth standardizing.
+
+### antipattern: string forward-ref with `| None` doesn't work
+
+```python
+# WRONG — crashes at class-def time
+iteration_budget: "IterationBudget" | None = None,
+# TypeError: unsupported operand type(s) for |: 'str' and 'NoneType'
+
+# RIGHT — wrap the whole thing in Optional
+iteration_budget: Optional["IterationBudget"] = None,
+```
+
+when a type is a forward reference (string-quoted because it's not yet defined),
+you CANNOT use PEP 604 `| None` on it directly — the `|` operator tries to
+OR a `str` with `NoneType` and crashes. must use `Optional["ForwardRef"]`.
+
+this affected both `agent_init.py` and `run_agent.py`.
+
+---
+
+## hermes_state.py (49 params fixed)
+same `X = None` → `X | None = None` sweep. this is the SQLite session store
+module — heavily imported by cli.py, run_agent.py, gateway/, etc.
+
+## batch_runner.py (24 params fixed)
+parallel batch processing entry point.
+
+## cli.py (18 params fixed)
+the HermesCLI class constructor + helper methods.
+
+## tools/*.py (20+ params fixed across file_tools, file_operations,
+skills_tool, skills_hub, terminal_tool, browser_tool, memory_tool,
+delegate_tool, process_registry, skill_manager_tool, session_search_tool)
+
+---
+
+## summary of the invalid-parameter-default sweep
+
+total params fixed: ~250 across ~25 core files
+the pattern is always identical: `param: Type = None` → `param: Type | None = None`
+
+two runtime-breaking gotchas found during the sweep:
+1. lowercase `callable` (builtin function) → must be `Callable` (typing)
+2. string forward-refs can't use `| None` → must use `Optional["Ref"]`

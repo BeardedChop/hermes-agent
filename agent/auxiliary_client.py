@@ -3972,7 +3972,7 @@ async def _call_fallback_candidate_async(
 
 def _try_payment_fallback(
     failed_provider: str,
-    task: str = None,
+    task: str | None = None,
     reason: str = "payment error",
 ) -> Tuple[Optional[Any], Optional[str], str]:
     """Try alternative providers after a payment/credit or connection error.
@@ -4023,7 +4023,7 @@ def _try_payment_fallback(
 
 def _try_main_agent_model_fallback(
     failed_provider: str,
-    task: str = None,
+    task: str | None = None,
     reason: str = "error",
 ) -> Tuple[Optional[Any], Optional[str], str]:
     """Last-resort fallback to the user's main agent provider + model.
@@ -4665,12 +4665,12 @@ def _normalize_resolved_model(model_name: Optional[str], provider: str) -> Optio
 
 def resolve_provider_client(
     provider: str,
-    model: str = None,
+    model: str | None = None,
     async_mode: bool = False,
     raw_codex: bool = False,
-    explicit_base_url: str = None,
-    explicit_api_key: str = None,
-    api_mode: str = None,
+    explicit_base_url: str | None = None,
+    explicit_api_key: str | None = None,
+    api_mode: str | None = None,
     main_runtime: Optional[Dict[str, Any]] = None,
     is_vision: bool = False,
     task: Optional[str] = None,
@@ -6086,11 +6086,11 @@ def _compat_model(client: Any, model: Optional[str], cached_default: Optional[st
 
 def _get_cached_client(
     provider: str,
-    model: str = None,
+    model: str | None = None,
     async_mode: bool = False,
-    base_url: str = None,
-    api_key: str = None,
-    api_mode: str = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
+    api_mode: str | None = None,
     main_runtime: Optional[Dict[str, Any]] = None,
     is_vision: bool = False,
     task: Optional[str] = None,
@@ -6222,11 +6222,11 @@ _AUX_DIRECT_API_BASE_URLS: Dict[str, str] = {
 
 
 def _resolve_task_provider_model(
-    task: str = None,
-    provider: str = None,
-    model: str = None,
-    base_url: str = None,
-    api_key: str = None,
+    task: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
 ) -> Tuple[str, Optional[str], Optional[str], Optional[str], Optional[str]]:
     """Determine provider + model for a call.
 
@@ -6900,23 +6900,23 @@ def _obj_get(obj: Any, key: str, default: Any = None) -> Any:
 
 
 def call_llm(
-    task: str = None,
+    task: str | None = None,
     *,
-    provider: str = None,
-    model: str = None,
-    base_url: str = None,
-    api_key: str = None,
+    provider: str | None = None,
+    model: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
     main_runtime: Optional[Dict[str, Any]] = None,
     messages: list,
     temperature: Optional[float] = None,
-    max_tokens: int = None,
-    tools: list = None,
-    timeout: float = None,
-    extra_body: dict = None,
+    max_tokens: int | None = None,
+    tools: list | None = None,
+    timeout: float | None = None,
+    extra_body: dict | None = None,
     reasoning_config: Optional[dict] = None,
-    api_mode: str = None,
+    api_mode: str | None = None,
     stream: bool = False,
-    stream_options: dict = None,
+    stream_options: dict | None = None,
 ) -> Any:
     """Centralized synchronous LLM call.
 
@@ -7567,19 +7567,19 @@ def extract_content_or_reasoning(response) -> str:
 
 
 async def async_call_llm(
-    task: str = None,
+    task: str | None = None,
     *,
-    provider: str = None,
-    model: str = None,
-    base_url: str = None,
-    api_key: str = None,
+    provider: str | None = None,
+    model: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
     main_runtime: Optional[Dict[str, Any]] = None,
     messages: list,
     temperature: Optional[float] = None,
-    max_tokens: int = None,
-    tools: list = None,
-    timeout: float = None,
-    extra_body: dict = None,
+    max_tokens: int | None = None,
+    tools: list | None = None,
+    timeout: float | None = None,
+    extra_body: dict | None = None,
     reasoning_config: Optional[dict] = None,
 ) -> Any:
     """Centralized asynchronous LLM call.

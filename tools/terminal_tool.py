@@ -1482,10 +1482,10 @@ def _get_modal_backend_state(modal_mode: object | None) -> Dict[str, Any]:
 
 
 def _create_environment(env_type: str, image: str, cwd: str, timeout: int,
-                        ssh_config: dict = None, container_config: dict = None,
-                        local_config: dict = None,
+                        ssh_config: dict | None = None, container_config: dict = None,
+                        local_config: dict | None = None,
                         task_id: str = "default",
-                        host_cwd: str = None):
+                        host_cwd: str | None = None):
     """
     Create an execution environment for sandboxed command execution.
     

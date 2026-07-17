@@ -3391,7 +3391,7 @@ def _has_sticky_block(conn: sqlite3.Connection, task_id: str) -> bool:
 
 
 def recompute_ready(
-    conn: sqlite3.Connection, failure_limit: int = None,
+    conn: sqlite3.Connection, failure_limit: int | None = None,
 ) -> int:
     """Promote ``todo`` tasks to ``ready`` when all parents are ``done`` or ``archived``.
 
@@ -7025,7 +7025,7 @@ def _record_task_failure(
     error: str,
     *,
     outcome: str,
-    failure_limit: int = None,
+    failure_limit: int | None = None,
     force_trip: bool = False,
     release_claim: bool = False,
     end_run: bool = False,
@@ -7190,7 +7190,7 @@ def _record_spawn_failure(
     task_id: str,
     error: str,
     *,
-    failure_limit: int = None,
+    failure_limit: int | None = None,
 ) -> bool:
     return _record_task_failure(
         conn, task_id, error,

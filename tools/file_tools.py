@@ -1653,7 +1653,7 @@ def write_file_tool(path: str, content: str, task_id: str = "default",
 
 
 def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
-               new_string: str = None, replace_all: bool = False, patch: str = None,
+               new_string: str | None = None, replace_all: bool = False, patch: str = None,
                task_id: str = "default", cross_profile: bool = False,
                session_id: str | None = None) -> str:
     """Patch a file using replace mode or V4A patch format.
@@ -1847,7 +1847,7 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
 
 
 def search_tool(pattern: str, target: str = "content", path: str = ".",
-                file_glob: str = None, limit: int = 50, offset: int = 0,
+                file_glob: str | None = None, limit: int = 50, offset: int = 0,
                 output_mode: str = "content", context: int = 0,
                 task_id: str = "default") -> str:
     """Search for content or files."""

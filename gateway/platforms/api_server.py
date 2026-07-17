@@ -2891,8 +2891,8 @@ class APIServerAdapter(BasePlatformAdapter):
 
     async def _write_sse_chat_completion(
         self, request: "web.Request", completion_id: str, model: str,
-        created: int, stream_q, agent_task, agent_ref=None, session_id: str = None,
-        gateway_session_key: str = None,
+        created: int, stream_q, agent_task, agent_ref | None = None, session_id: str = None,
+        gateway_session_key: str | None = None,
     ) -> "web.StreamResponse":
         """Write real streaming SSE from agent's stream_delta_callback queue.
 
