@@ -186,6 +186,7 @@ export function useSessionActions({
   // history entry.
   const rotatedStoredId = useStore($activeSessionStoredId)
 
+  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
     if (!rotatedStoredId || rotatedStoredId === selectedStoredSessionIdRef.current) {
       return

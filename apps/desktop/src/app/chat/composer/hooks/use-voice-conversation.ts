@@ -51,18 +51,22 @@ export function useVoiceConversation({
   const statusRef = useRef<ConversationStatus>('idle')
   const wasEnabledRef = useRef(enabled)
 
+  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
     enabledRef.current = enabled
   }, [enabled])
 
+  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
     mutedRef.current = muted
   }, [muted])
 
+  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
     busyRef.current = busy
   }, [busy])
 
+  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
     statusRef.current = status
   }, [status])
@@ -327,6 +331,7 @@ export function useVoiceConversation({
 
   // Drive the loop: after a voice-submitted turn, speak stable chunks as the
   // assistant stream grows. Otherwise start listening when idle between turns.
+  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
     if (!enabled || muted) {
       return
@@ -384,6 +389,7 @@ export function useVoiceConversation({
     }
   }, [busy, consumePendingResponse, enabled, muted, pendingResponse, speak, startListening, status])
 
+  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
     if (enabled && !wasEnabledRef.current) {
       void start()
