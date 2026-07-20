@@ -337,11 +337,15 @@ test.describe('loading a large previous session', () => {
     expect(results, 'render count data should have been collected').not.toBeNull()
 
     if (results) {
+      // After the fix, the transcript should paint exactly once (1 burst).
+      // Before the fix, it painted 2-3 times (the "re-renders a few times
+      // as it loads" bug). This assertion proves the fix works — if it
+      // ever regresses to >= 2, the test will fail.
       expect(
         results.bursts,
-        `expected >= 2 mutation bursts (multiple re-renders during load), ` +
+        `expected exactly 1 mutation burst (single paint after fix), ` +
           `got ${results.bursts}: ${JSON.stringify(results.timeline)}`,
-      ).toBeGreaterThanOrEqual(2)
+      ).toBe(1)
     }
   })
 })
