@@ -23,8 +23,13 @@ let activePage: Page | null = null
  * Install the error-banner guard on a page. Watches for `[role="alert"]`
  * elements appearing in the DOM. When one is found, records its text
  * content for the afterEach assertion.
+ *
+ * Exported so e2e fixture functions (which create pages via _electron.launch)
+ * can install the guard on their custom pages — the default Playwright `page`
+ * fixture override only catches pages created by Playwright itself, not
+ * pages created by the test's own Electron launch.
  */
-function installErrorBannerGuard(page: Page): void {
+export function installErrorBannerGuard(page: Page): void {
   activePage = page
 
   // Clear any errors from a previous test when a new page is created.
@@ -69,9 +74,10 @@ function installErrorBannerGuard(page: Page): void {
 
 /**
  * Check for error banners that appeared during the test. Called in
- * afterEach via the custom fixture below.
+ * afterEach via the custom fixture below. Also exported so specs that
+ * manage their own page lifecycle can call it directly.
  */
-async function collectErrorBanners(page: Page | null): Promise<string[]> {
+export async function collectErrorBanners(page: Page | null): Promise<string[]> {
   if (!page) {
     return []
   }
@@ -110,17 +116,29 @@ export const test = base.extend({
 })
 
 // afterEach: fail the test if any error banners appeared.
-base.afterEach(async ({ page }, testInfo) => {
-  const errors = await collectErrorBanners(page ?? activePage)
+// Always fires — even if the test already failed for another reason.
+// An error banner often IS the root cause (e.g. "resume failed" from a
+// backend bug), and suppressing it when the test also fails on an
+// assertion hides the real problem.
+//
+// Uses `activePage` (set by installErrorBannerGuard) instead of the
+// default `page` fixture — Electron tests create their own page via
+// app.firstWindow(), so the default `page` fixture is undefined.
+base.afterEach(async ({}, testInfo) => {
+  const errors = await collectErrorBanners(activePage)
 
-  if (errors.length > 0 && testInfo.status !== 'failed') {
-    // Only fail if the test didn't already fail on its own — we don't
-    // want to mask the original assertion error with our banner check.
+  if (errors.length > 0) {
     throw new Error(
       `Error banner(s) appeared during test "${testInfo.title}":\n` +
         errors.map(e => `  • ${e}`).join('\n'),
     )
   }
+})
+
+// Reset for the next test file.
+base.afterAll(async () => {
+  seenErrors.length = 0
+  activePage = null
 })
 
 export { expect, type Page, type ElectronApplication, _electron }

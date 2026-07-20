@@ -27,7 +27,7 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import * as path from 'node:path'
 
-import { _electron, expect, type ElectronApplication, type Page, test } from './test'
+import { _electron, expect, installErrorBannerGuard, type ElectronApplication, type Page, test } from './test'
 
 import {
   buildAppEnv,
@@ -110,6 +110,10 @@ async function setupSeededMockBackend(): Promise<SeededMockBackendFixture> {
   // 4. Build env + launch
   const env = buildAppEnv(sandbox)
   const { app, page } = await launchDesktop(env)
+
+  // Install the error-banner guard on the custom page (launchDesktop
+  // already calls this, but call again in case the page was replaced).
+  installErrorBannerGuard(page)
 
   return {
     app,
