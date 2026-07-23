@@ -1,6 +1,9 @@
 import './styles.css'
 // Side-effect: applies the persisted window translucency on load.
 import './store/translucency'
+// Side-effect: attaches debug trace subscriptions (persistence, gateway
+// events, session switch watchers). No-ops entirely when tracing is disabled.
+import './lib/debug-trace'
 
 import { QueryClientProvider } from '@tanstack/react-query'
 import { StrictMode } from 'react'
