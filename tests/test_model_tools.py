@@ -412,6 +412,50 @@ class TestCoerceNumberInfNan:
         assert _coerce_number("3.14") == 3.14
         assert _coerce_number("1e3") == 1000
 
+class TestKanbanWorkerDisabledToolsets:
+    """Regression test: a kanban worker (HERMES_KANBAN_TASK set, not a
+    delegated child) must keep kanban_complete/kanban_block/kanban_heartbeat
+    even when its profile lists 'kanban' in disabled_toolsets. Previously the
+    disabled_toolsets subtraction stripped the re-unioned kanban toolset, so
+    the worker could not close its task and looped on ghost heartbeats."""
+
+    _KANBAN_LIFECYCLE_TOOLS = {"kanban_complete", "kanban_block", "kanban_heartbeat"}
+
+    def test_kanban_worker_keeps_kanban_tools_when_profile_disables_them(self, monkeypatch):
+        import model_tools
+
+        monkeypatch.setenv("HERMES_KANBAN_TASK", "t_test1234")
+        monkeypatch.setattr(model_tools, "_is_delegated_child_context", lambda: False)
+        monkeypatch.setattr(model_tools, "_is_dispatcher_owned_worker", lambda: True)
+
+        tools = model_tools.get_tool_definitions(
+            enabled_toolsets=["terminal", "file"],
+            disabled_toolsets=["kanban"],
+            quiet_mode=True,
+        )
+        names = {t["function"]["name"] for t in tools}
+        assert self._KANBAN_LIFECYCLE_TOOLS <= names, (
+            f"kanban worker lost lifecycle tools: "
+            f"{self._KANBAN_LIFECYCLE_TOOLS - names}"
+        )
+
+    def test_disabled_kanban_stays_disabled_without_worker_env(self, monkeypatch):
+        import model_tools
+
+        monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
+
+        tools = model_tools.get_tool_definitions(
+            enabled_toolsets=["terminal", "file"],
+            disabled_toolsets=["kanban"],
+            quiet_mode=True,
+        )
+        names = {t["function"]["name"] for t in tools}
+        assert not (self._KANBAN_LIFECYCLE_TOOLS & names), (
+            f"kanban tools leaked into a non-worker profile: "
+            f"{self._KANBAN_LIFECYCLE_TOOLS & names}"
+        )
+
+
 class TestDisabledToolsetsPlatformBundle:
     """Regression test for #33924: disabling a platform bundle (hermes-*)
     must not remove core tools from other enabled toolsets."""
