@@ -10706,6 +10706,33 @@ def _retag_legacy_worker_sessions(workspaces_root_path: str) -> None:
         _log.debug("kanban worker: legacy session retag skipped (%s)", exc)
 
 
+_WORKER_PROMPT_BEGIN = "=== KANBAN TASK INSTRUCTIONS (begin) ==="
+_WORKER_PROMPT_END = "=== KANBAN TASK INSTRUCTIONS (end) ==="
+_WORKER_PROMPT_NO_BODY = "(No task body was provided.)"
+
+
+def _build_worker_prompt(task: Task) -> str:
+    """Compose the worker's initial prompt.
+
+    Workers used to receive only ``work kanban task <id>`` and were expected
+    to fetch the task body with kanban tools — but those tools are not
+    reliably exposed, causing empty-task stalls, loops, and ghost heartbeats.
+    The prompt now carries the task ID, title, and full body between clear
+    delimiters so arbitrary task text cannot be mistaken for system
+    instructions, plus an explicit marker when no body was provided.
+    """
+    lines = [
+        f"work kanban task {task.id}",
+        _WORKER_PROMPT_BEGIN,
+        f"Task ID: {task.id}",
+        f"Title: {task.title or '(untitled task)'}",
+        "Body:",
+        task.body if task.body else _WORKER_PROMPT_NO_BODY,
+        _WORKER_PROMPT_END,
+    ]
+    return "\n".join(lines)
+
+
 def _default_spawn(
     task: Task,
     workspace: str,
@@ -10732,7 +10759,7 @@ def _default_spawn(
 
     profile_arg = normalize_profile_name(task.assignee)
 
-    prompt = f"work kanban task {task.id}"
+    prompt = _build_worker_prompt(task)
     env = dict(os.environ)
     # The dispatcher is detached from every conversation. Its worker must never
     # inherit routing mirrored by a previous gateway turn, even before the first
