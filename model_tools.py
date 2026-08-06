@@ -474,6 +474,18 @@ def _compute_tool_definitions(
             elif not quiet_mode:
                 print(f"⚠️  Unknown toolset: {toolset_name}")
 
+    # Kanban workers must keep their lifecycle tools even when the profile
+    # lists 'kanban' in disabled_toolsets: the subtraction above strips the
+    # re-unioned toolset, leaving the worker without kanban_complete /
+    # kanban_block / kanban_heartbeat so it cannot close its task and loops
+    # on ghost heartbeats. Mirror the worker-context condition above.
+    if (
+        os.environ.get("HERMES_KANBAN_TASK")
+        and not _is_delegated_child_context()
+        and _is_dispatcher_owned_worker()
+    ):
+        tools_to_include.update(resolve_toolset("kanban"))
+
     # Plugin-registered tools are now resolved through the normal toolset
     # path — validate_toolset() / resolve_toolset() / get_all_toolsets()
     # all check the tool registry for plugin-provided toolsets.  No bypass
