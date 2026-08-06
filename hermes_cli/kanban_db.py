@@ -10721,13 +10721,27 @@ def _build_worker_prompt(task: Task) -> str:
     delimiters so arbitrary task text cannot be mistaken for system
     instructions, plus an explicit marker when no body was provided.
     """
+    def _cap_prompt_field(value: Optional[str], limit: int) -> str:
+        if not value:
+            return ""
+        if len(value) <= limit:
+            return value
+        omitted = len(value) - limit
+        return value[:limit] + f"… [truncated, {omitted} chars omitted]"
+
+    title = _cap_prompt_field(task.title, _CTX_MAX_FIELD_BYTES) or "(untitled task)"
+    body = (
+        _cap_prompt_field(task.body, _CTX_MAX_BODY_BYTES)
+        if task.body
+        else _WORKER_PROMPT_NO_BODY
+    )
     lines = [
         f"work kanban task {task.id}",
         _WORKER_PROMPT_BEGIN,
         f"Task ID: {task.id}",
-        f"Title: {task.title or '(untitled task)'}",
+        f"Title: {title}",
         "Body:",
-        task.body if task.body else _WORKER_PROMPT_NO_BODY,
+        body,
         _WORKER_PROMPT_END,
     ]
     return "\n".join(lines)
