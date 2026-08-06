@@ -64,3 +64,16 @@ def test_prompt_with_empty_string_body_gets_marker():
     task = _make_task(body="")
     prompt = kb._build_worker_prompt(task)
     assert kb._WORKER_PROMPT_NO_BODY in prompt
+
+
+def test_prompt_caps_large_title_and_body_with_visible_markers():
+    task = _make_task(body="b" * (kb._CTX_MAX_BODY_BYTES + 17))
+    task.title = "t" * (kb._CTX_MAX_FIELD_BYTES + 9)
+
+    prompt = kb._build_worker_prompt(task)
+
+    assert "t" * kb._CTX_MAX_FIELD_BYTES in prompt
+    assert "[truncated, 9 chars omitted]" in prompt
+    assert "b" * kb._CTX_MAX_BODY_BYTES in prompt
+    assert "[truncated, 17 chars omitted]" in prompt
+    assert len(prompt) < kb._CTX_MAX_FIELD_BYTES + kb._CTX_MAX_BODY_BYTES + 512
