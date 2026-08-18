@@ -4,10 +4,10 @@ When a kanban task body contains a local image path or an ``http(s)://``
 image URL, the worker must surface that image to the model on its first
 user turn — matching the CLI/gateway behaviour for inbound images.
 
-The dispatcher spawns the worker as
-``hermes -p <profile> chat -q "work kanban task <id>"``. The task body
-itself never appears in argv; the worker has to read it from the kanban
-DB during startup. These tests cover the round-trip:
+The dispatcher embeds the task body in the worker's initial ``-q`` prompt.
+Worker startup still reads the durable task body from the kanban DB for image
+enrichment, so local paths and URLs become native vision parts without relying
+on the model to notice or open them itself. These tests cover that round-trip:
 
   task body  →  kanban_db.get_task  →  extract_image_refs  →
   build_native_content_parts  →  multimodal user turn
@@ -96,11 +96,17 @@ class TestBuildPartsFromTaskBody:
         body = _read_body(tid)
         paths, urls = extract_image_refs(body)
 
-        # Mirrors the cli.py wiring: pass the worker's literal -q argument
-        # (the dispatcher uses ``"work kanban task <id>"``) plus the
-        # extracted refs through build_native_content_parts.
+        # Mirrors the cli.py wiring: pass the worker's initial prompt plus the
+        # independently extracted refs through build_native_content_parts.
+        conn = kb.connect()
+        try:
+            task = kb.get_task(conn, tid)
+        finally:
+            conn.close()
+        assert task is not None
+        worker_prompt = kb._build_worker_prompt(task)
         parts, skipped = build_native_content_parts(
-            f"work kanban task {tid}",
+            worker_prompt,
             paths,
             image_urls=urls or None,
         )
