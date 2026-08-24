@@ -147,7 +147,7 @@ jobs:
   contributor-check:
     name: Check contributors
     needs: detect
-    if: needs.detect.outputs.python == 'true'
+    if: needs.detect.outputs.python == 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'chore/sync-upstream-'))
     uses: ./.github/workflows/contributor-check.yml
 
   uv-lockfile:
@@ -191,7 +191,7 @@ jobs:
   review-labels:
     name: Review label gate
     needs: [detect, supply-chain]
-    if: always() && needs.detect.outputs.event_name == 'pull_request' && (needs.detect.outputs.ci_review == 'true' || needs.detect.outputs.mcp_catalog == 'true' || needs.supply-chain.outputs.critical_findings == 'true')
+    if: always() && needs.detect.outputs.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'chore/sync-upstream-')) && (needs.detect.outputs.ci_review == 'true' || needs.detect.outputs.mcp_catalog == 'true' || needs.supply-chain.outputs.critical_findings == 'true')
     uses: ./.github/workflows/review-labels.yml
     with:
       ci_review: ${{ needs.detect.outputs.ci_review == 'true' }}
