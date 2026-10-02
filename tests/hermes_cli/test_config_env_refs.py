@@ -1,5 +1,7 @@
 import textwrap
 
+import pytest
+
 from hermes_cli.config import load_config, save_config
 
 
@@ -57,6 +59,35 @@ def test_save_config_allows_intentional_secret_value_change(monkeypatch, tmp_pat
     saved = _read_config(tmp_path)
     assert "api_key: sk-new-secret" in saved
     assert "${TU_ZI_API_KEY}" not in saved
+
+
+@pytest.mark.parametrize(
+    "placeholder",
+    ["***", "[REDACTED]", "sk-...", "sk-a...9xyz", "«redacted:sk-…»", "Bearer ***"],
+)
+def test_save_config_refuses_redacted_secret_placeholder(monkeypatch, tmp_path, placeholder):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("TU_ZI_API_KEY", "sk-old-secret")
+    _write_config(
+        tmp_path,
+        """\
+        custom_providers:
+          - name: tuzi
+            api_key: ${TU_ZI_API_KEY}
+            model: claude-opus-4-6
+        model:
+          default: claude-opus-4-6
+        """,
+    )
+
+    before = _read_config(tmp_path)
+    config = load_config()
+    config["custom_providers"][0]["api_key"] = placeholder
+
+    with pytest.raises(ValueError, match="redacted credential placeholder"):
+        save_config(config)
+
+    assert _read_config(tmp_path) == before
 
 
 

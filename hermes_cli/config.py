@@ -2046,6 +2046,39 @@ def require_readable_config_before_write(config_path: Optional[Path] = None) -> 
     return loaded
 
 
+def _looks_like_redacted_secret(value: str) -> bool:
+    """Whether *value* is a display mask that can never authenticate."""
+    value = value.strip()
+    folded = value.casefold()
+    if "***" in value:
+        return True
+    if folded == "redacted" or (folded.startswith("[redact") and value.endswith("]")):
+        return True
+    if folded.startswith("«redacted") and value.endswith("»"):
+        return True
+    return len(value) <= 64 and ("..." in value or "…" in value)
+
+
+def _refuse_redacted_secrets_in_config(data: Dict[str, Any]) -> None:
+    """Keep non-reusable display masks out of credential fields in config.yaml."""
+    def walk(value: Any, path: Tuple[str, ...] = ()) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                key_text = str(key)
+                child_path = (*path, key_text)
+                if (_is_secret_config_key(key_text) and isinstance(child, str)
+                        and _looks_like_redacted_secret(child)):
+                    raise ValueError(
+                        f"Refusing to write a redacted credential placeholder at {'.'.join(child_path)} "
+                        "to config.yaml. Enter the real credential through Hermes setup instead.")
+                walk(child, child_path)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                walk(child, (*path, str(index)))
+
+    walk(data)
+
+
 def atomic_config_write(config_path: Path, data: Dict[str, Any], *, extra_content_on_create: Optional[str] = None) -> None:
     """THE ``config.yaml`` writer: fail-closed (``require_readable_config_before_write``) and
     comment-preserving (ruamel round-trip merge of *data* onto the on-disk document). Every code
@@ -2055,6 +2088,7 @@ def atomic_config_write(config_path: Path, data: Dict[str, Any], *, extra_conten
     from utils import atomic_roundtrip_yaml_save
 
     _refuse_failed_read(config_path, data)
+    _refuse_redacted_secrets_in_config(data)
     atomic_roundtrip_yaml_save(config_path, data, extra_content_on_create=extra_content_on_create)
 
 

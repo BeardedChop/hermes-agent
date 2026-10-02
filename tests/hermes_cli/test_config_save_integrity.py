@@ -78,6 +78,66 @@ def _save_raw():  # the shape every migration step and ``write_platform_config_f
     save_config(cfg)
 
 
+def test_config_writer_refuses_redacted_secret_inside_mcp_env(home):
+    """A display mask must never become the MCP server's stored credential."""
+    cfg = read_raw_config()
+    cfg["mcp_servers"] = {
+        "example": {"command": "npx", "env": {"EXAMPLE_API_KEY": "sk-..."}}
+    }
+
+    with pytest.raises(ValueError, match="redacted credential placeholder"):
+        save_config(cfg)
+
+    assert "sk-..." not in (home / "config.yaml").read_text(encoding="utf-8")
+
+
+def test_config_writer_allows_mcp_env_reference(home):
+    cfg = read_raw_config()
+    cfg["mcp_servers"] = {
+        "example": {"command": "npx", "env": {"EXAMPLE_API_KEY": "${EXAMPLE_API_KEY}"}}
+    }
+
+    save_config(cfg)
+
+    assert "${EXAMPLE_API_KEY}" in (home / "config.yaml").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("key", ["authorization", "X-API-Key", "private_key", "key"])
+def test_config_writer_refuses_redacted_value_for_every_known_secret_key_shape(home, key):
+    path = home / "config.yaml"
+    before = path.read_bytes()
+    cfg = read_raw_config()
+    cfg["review"] = {key: "***"}
+
+    with pytest.raises(ValueError, match="redacted credential placeholder"):
+        save_config(cfg)
+
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("api_key", "configured-value"), ("authorization", "Bearer configured-value")],
+)
+def test_config_writer_allows_intentional_literal_credentials(home, key, value):
+    cfg = read_raw_config()
+    cfg["review"] = {key: value}
+
+    save_config(cfg)
+
+    assert read_raw_config()["review"][key] == value
+
+
+@pytest.mark.parametrize("key", ["token_count", "secret_santa"])
+def test_config_writer_allows_nonsecret_key_names(home, key):
+    cfg = read_raw_config()
+    cfg["review"] = {key: "ordinary-value"}
+
+    save_config(cfg)
+
+    assert read_raw_config()["review"][key] == "ordinary-value"
+
+
 def _tui_config_set():
     from tui_gateway import server
     reply = server._methods["config.set"](1, {"key": "skin", "value": "ares"})
