@@ -1412,7 +1412,8 @@ class TestEnvWriteDenylist:
             "GIT_COMMITTER_NAME", "GIT_AUTHOR_NAME", "GIT_TERMINAL_PROMPT",
             "GIT_EDITOR_WIDE",  # near-miss: not the real GIT_EDITOR
             # POSIX case: lowercase exec names are different, inert variables.
-            "git_config_parameters", "ld_preload",
+            pytest.param("git_config_parameters", marks=pytest.mark.platforms("posix")),
+            pytest.param("ld_preload", marks=pytest.mark.platforms("posix")),
         ],
     )
     def test_non_exec_near_misses_still_writable(self, allowed_key):
@@ -1420,13 +1421,14 @@ class TestEnvWriteDenylist:
         env = load_env()
         assert env[allowed_key] == "test-value-123"
 
-    @pytest.mark.parametrize("protected_key", ["Ld_Preload", "Git_Config_Parameters"])
-    def test_windows_policy_denies_mixed_case_exec_names(self, protected_key, monkeypatch):
+    @pytest.mark.platforms("windows")
+    @pytest.mark.parametrize("protected_key", ["Ld_Preload", "Git_Config_Parameters", "ld_preload", "git_config_parameters"])
+    def test_windows_policy_denies_mixed_case_exec_names(self, protected_key):
         """Windows env names are case-insensitive, so the writer must refuse the mixed-case
         spelling of a denied exec-influence name too."""
         import hermes_cli.config as config_mod
 
-        monkeypatch.setattr(config_mod, "_IS_WINDOWS", True)
+        assert config_mod._IS_WINDOWS
         with pytest.raises(ValueError, match="denylist"):
             save_env_value(protected_key, "1")
 
