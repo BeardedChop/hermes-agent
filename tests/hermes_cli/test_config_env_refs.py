@@ -37,7 +37,7 @@ def test_save_config_preserves_unresolved_env_refs(monkeypatch, tmp_path):
 
 def test_save_config_allows_intentional_secret_value_change(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    monkeypatch.setenv("TU_ZI_API_KEY", "sk-old-secret")
+    monkeypatch.setenv("TU_ZI_API_KEY", "old-configured-value")
     _write_config(
         tmp_path,
         """\
@@ -51,11 +51,11 @@ def test_save_config_allows_intentional_secret_value_change(monkeypatch, tmp_pat
     )
 
     config = load_config()
-    config["custom_providers"][0]["api_key"] = "sk-new-secret"
+    config["custom_providers"][0]["api_key"] = "configured-value"
     save_config(config)
 
     saved = _read_config(tmp_path)
-    assert "api_key: sk-new-secret" in saved
+    assert "api_key: configured-value" in saved
     assert "${TU_ZI_API_KEY}" not in saved
 
 

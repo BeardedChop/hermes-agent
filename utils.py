@@ -1,6 +1,7 @@
 """Shared utility functions for hermes-agent."""
 
 import errno
+import hashlib
 import json
 import logging
 import os
@@ -15,6 +16,7 @@ from typing import Any, Union
 from urllib.parse import urlparse
 
 import hermes_yaml as yaml
+from hermes_platform.host.facts import os_family
 
 logger = logging.getLogger(__name__)
 
@@ -36,16 +38,22 @@ def env_var_enabled(name: str, default: str = "") -> bool:
     return is_truthy_value(os.getenv(name, default), default=False)
 
 
-def file_signature(st: os.stat_result) -> "tuple[int, int, int, int]":
-    """Change-detection key for a stat result: ``(st_mtime_ns, st_size, st_ino, st_ctime_ns)``.
+def file_signature(st: os.stat_result, *, path: Path | None = None) -> "tuple[int, int, int, int]":
+    """Metadata cache key, with a content check for Windows configuration files.
 
-    mtime + size alone miss a replacement that preserves both (``cp -p``, ``rsync -t``, a tar
-    restore, a script pinning the timestamp with ``os.utime``). The inode changes on an atomic
-    replace and ctime cannot be backdated from user space, so the pair catches those writers.
-    On Windows ``st_ino`` may be 0 and ``st_ctime_ns`` is the creation time — both stable across
-    an in-place rewrite, so the key degrades to mtime + size there rather than misfiring.
+    POSIX ctime catches same-size, timestamp-preserving rewrites. Windows ctime
+    is creation time instead; callers supplying a config path need a content
+    fingerprint to distinguish those rewrites while retaining unchanged-file hits.
+    Read failures retain the stat key so the loader's existing error handling runs.
     """
-    return (st.st_mtime_ns, st.st_size, st.st_ino, st.st_ctime_ns)
+    change = st.st_ctime_ns
+    if path is not None and os_family() == "win32":
+        try:
+            change = int.from_bytes(hashlib.blake2b(path.read_bytes(), digest_size=16).digest(), "big")
+        except OSError:
+            # Do not bypass the loader's last-known-good and refuse-write handling.
+            change = st.st_ctime_ns
+    return (st.st_mtime_ns, st.st_size, st.st_ino, change)
 
 
 def _preserve_file_mode(path: Path) -> "int | None":

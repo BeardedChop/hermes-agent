@@ -1948,7 +1948,7 @@ def _read_raw_config_impl(*, want_deepcopy: bool) -> Dict[str, Any]:
     # every cached read for the duration). A lost race just falls through to the locked re-check.
     try:
         config_path = get_config_path()
-        cache_key = file_signature(config_path.stat())
+        cache_key = file_signature(config_path.stat(), path=config_path)
         hit = _raw_config_cache_hit(str(config_path), cache_key)
         if hit is not None:
             return copy.deepcopy(hit) if want_deepcopy else hit
@@ -1958,7 +1958,7 @@ def _read_raw_config_impl(*, want_deepcopy: bool) -> Dict[str, Any]:
     with _CONFIG_LOCK:
         config_path = get_config_path()
         try:
-            cache_key = file_signature(config_path.stat())
+            cache_key = file_signature(config_path.stat(), path=config_path)
         except FileNotFoundError:
             return {}
         except OSError as e:
@@ -2079,8 +2079,10 @@ def _write_config_state(
 ) -> None:
     """Shared comment-preserving config writer; omission policy is selected by the public wrapper."""
     from utils import atomic_roundtrip_yaml_save
+    from hermes_cli.config_secret_guard import refuse_redacted_secrets_in_config
 
     _refuse_failed_read(config_path, data)
+    refuse_redacted_secrets_in_config(data)
     if not allow_omissions:
         existing = require_readable_config_before_write(config_path)
         omitted = _omitted_config_paths(existing, data)
@@ -2259,13 +2261,14 @@ def _load_config_cache_sig(config_path: Path) -> Tuple[Optional[Tuple[int, int, 
     the merged result. ``cache_sig`` is None only when neither file exists (nothing to cache on)."""
     try:
         st = config_path.stat()
-        user_sig: Optional[Tuple[int, int, int, int]] = file_signature(st)
+        user_sig: Optional[Tuple[int, int, int, int]] = file_signature(st, path=config_path)
     except FileNotFoundError:
         user_sig = None
     managed_dir = managed_scope.get_managed_dir()
     try:
-        mst = (managed_dir / "config.yaml").stat() if managed_dir else None
-        managed_sig = file_signature(mst) if mst else (0, 0, 0, 0)
+        managed_path = managed_dir / "config.yaml" if managed_dir else None
+        mst = managed_path.stat() if managed_path else None
+        managed_sig = file_signature(mst, path=managed_path) if mst else (0, 0, 0, 0)
     except OSError:
         managed_sig = (0, 0, 0, 0)
     if user_sig is None and managed_sig == (0, 0, 0, 0):

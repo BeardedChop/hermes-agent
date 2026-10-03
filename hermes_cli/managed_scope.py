@@ -77,7 +77,7 @@ def _cached_read(path: Path, cache: Dict[str, tuple], parse):
         st = path.stat()
     except OSError:
         return None  # absent
-    key = file_signature(st)
+    key = file_signature(st, path=path)
     path_key = str(path)
     with _CACHE_LOCK:
         hit = cache.get(path_key)
