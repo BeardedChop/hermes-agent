@@ -683,8 +683,8 @@ class TestSanitizeEnvLines:
     def test_sanitize_env_file_does_not_rewrite_value_semantics(self, tmp_path):
         env_file = tmp_path / ".env"
         env_file.write_text(
-            "FAL_KEY=good\n"
-            "OPENROUTER_API_KEY=valFIRECRAWL_API_KEY=val2\n"
+            "FAL_KEY=example\n"
+            "OPENROUTER_API_KEY=example=example\n"
         )
         with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
             fixes = sanitize_env_file()
@@ -692,8 +692,8 @@ class TestSanitizeEnvLines:
 
             content = env_file.read_text()
             assert content == (
-                "FAL_KEY=good\n"
-                "OPENROUTER_API_KEY=valFIRECRAWL_API_KEY=val2\n"
+                "FAL_KEY=example\n"
+                "OPENROUTER_API_KEY=example=example\n"
             )
 
     def test_sanitize_env_file_noop_on_clean_file(self, tmp_path):
